@@ -1,0 +1,45 @@
+.session-trace { display: grid; gap: 16px; min-width: 0; }
+.session-trace-section { min-width: 0; }
+.session-trace-section h3,
+.session-trace-error h3 { margin: 0 0 8px; color: var(--tx); font-size: 14px; font-weight: 650; }
+.session-trace small { color: var(--tx3); font-size: 12px; font-weight: 400; }
+.session-trace details { margin: 0; max-width: none; }
+.session-trace-section .session-trace-row + .session-trace-row { margin-top: 4px; }
+.session-trace-system { color: var(--tx3); font-size: 12px; }
+.session-trace-system > summary { min-height: 34px; padding-block: 6px; }
+.session-trace-system > summary small { margin-left: 2px; }
+.session-trace-row > summary { min-height: 38px; font-size: 13px; font-weight: 550; }
+.session-trace-row > summary { justify-content: space-between; }
+.session-trace-row > summary > small { margin-left: auto; text-align: right; }
+.session-trace-row > summary::after { margin-left: 0; }
+.session-trace-operation { display: grid; gap: 3px; min-width: 0; }
+.session-trace-operation > span { overflow-wrap: anywhere; }
+.session-trace .session-trace-args { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70ch; }
+.session-trace-row > summary > small { flex-shrink: 0; }
+.session-trace-error-item + .session-trace-error-item { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--warn-line); }
+.session-trace-error-item code { overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .session-trace-row > summary { min-height: 44px; align-items: flex-start; }
+  .session-trace .session-trace-args { white-space: normal; overflow-wrap: anywhere; }
+}
+.session-trace details > summary:hover { background: var(--hover); }
+.session-trace details > summary:focus-visible { outline: 2px solid var(--ac); outline-offset: -2px; }
+.session-trace-body { display: grid; gap: 8px; padding: 10px 13px; border-top: 1px solid var(--bd); }
+.session-trace-body code { color: var(--tx2); }
+.session-trace-text { max-width: 75ch; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.session-trace pre,
+.session-trace-json { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 var(--font-mono); }
+.session-trace-empty { margin: 0; color: var(--tx3); }
+.session-trace-row > summary > .session-trace-failed { color: var(--err); }
+.session-trace-sent { padding: 12px 14px; border: 1px solid var(--bd); border-radius: 10px; background: var(--section-open); }
+.session-trace-sent h4, .session-trace-finish h4 { margin: 0 0 6px; font-size: 13px; }
+.session-trace-sent h4 small { margin-left: 6px; }
+.session-trace-message + .session-trace-message { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--bd); }
+.session-trace-sent + .session-trace-row, .session-trace-empty + .session-trace-row { margin-top: 8px; }
+.session-trace-finish { padding: 10px 1px 0; }
+.session-trace-finish p { margin: 0; }
+.session-trace-error { padding: 11px 13px; border: 1px solid var(--warn-line); border-radius: 10px; background: var(--warn-soft); color: var(--warn); }
+.session-trace-error h3 { color: inherit; }
+.session-trace-error p { margin: 4px 0 0; }
+.session-trace-error pre { color: var(--tx); background: transparent; padding: 0; }
+.session-trace-json { padding: 12px; border: 1px solid var(--bd); border-radius: 10px; background: var(--section-surface); }

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN" data-type="software">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="管理本机 QQ 接入与 OneBot 连接，查看 Alcor 核心状态。">
+  <title>Alcor 控制台</title>
+  <script src="/panel/theme-policy.js"></script>
+  <script src="/panel/theme.js"></script>
+  <link rel="stylesheet" href="/panel/style.css">
+  <script src="/panel/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <div class="workspace">
+    <header class="app-header">
+      <a class="brand" href="#overview" aria-label="Alcor 控制台总览">
+        <span class="mark" aria-hidden="true">A</span>
+        <span><strong>Alcor</strong><small>本机控制台</small></span>
+      </a>
+      <nav aria-label="主导航" hidden>
+        <a href="#overview" data-page="overview">总览</a>
+        <a href="#processes" data-page="processes">QQ 接入</a>
+        <a href="#nodes" data-page="nodes">OneBot 节点</a>
+        <a href="#logs" data-page="logs">运行日志</a>
+        <a href="#settings" data-page="settings">系统设置</a>
+        <a href="#debug" data-page="debug">调试工具</a>
+      </nav>
+      <div class="header-tools">
+        <span id="connection-badge" class="badge" data-state="neutral">未解锁</span>
+        <button id="logout" class="quiet" type="button" hidden>锁定</button>
+        <button id="theme-toggle" class="quiet" type="button">主题 · 自动</button>
+      </div>
+    </header>
+    <main id="main" tabindex="-1">
+      <section id="login" class="login-layout">
+        <form id="login-form" class="surface login-card">
+          <h1>解锁 Alcor 控制台</h1>
+          <p class="muted">输入配置文件中的 Alcor 访问令牌，或从启动程序直接打开控制台。</p>
+          <label for="token">访问令牌</label>
+          <input id="token" type="password" autocomplete="off" required minlength="16" aria-describedby="token-note login-error">
+          <small id="token-note">配置项 <code>listen.token</code>。QQ 登录请在官方 QQ 客户端完成。</small>
+          <p id="login-error" class="field-error" role="alert"></p>
+          <button type="submit">连接</button>
+        </form>
+      </section>
+      <div id="feedback" role="status" aria-live="polite"></div>
+      <div id="dashboard" hidden>
+        <div class="page-heading">
+          <div><h1 id="page-title" tabindex="-1">总览</h1><p id="page-description"></p></div>
+          <div class="page-tools"><span id="updated" class="muted"></span><button id="refresh" class="secondary">刷新状态</button></div>
+        </div>
+
+        <section id="page-overview" class="page" aria-labelledby="page-title">
+          <div id="status-banner" class="status-banner" data-state="neutral">
+            <span class="state-dot" aria-hidden="true"></span>
+            <div><strong id="state-title">正在检查连接</strong><p id="state-detail">读取核心服务和 QQ 后端状态。</p></div>
+            <a class="text-link" href="#processes">管理 QQ 接入</a>
+          </div>
+          <dl class="status-summary" aria-label="运行摘要">
+            <div><dt>核心服务</dt><dd id="core-state">—</dd><dd id="bridge-version" class="muted">—</dd></div>
+            <div><dt>QQ 账号</dt><dd id="account">—</dd><dd id="account-state" class="muted">—</dd></div>
+            <div><dt>QQ 后端</dt><dd id="backend-name">—</dd><dd id="backend-version" class="muted">—</dd></div>
+            <div><dt>下游连接</dt><dd id="clients">—</dd><dd class="muted">WebSocket 客户端</dd></div>
+            <div><dt>运行时间</dt><dd id="uptime">—</dd><dd id="mode" class="muted">—</dd></div>
+          </dl>
+          <div class="overview-grid">
+            <article class="surface">
+              <div class="section-heading"><h2>连接链路</h2><a class="text-link" href="#nodes">查看节点</a></div>
+              <ol id="connection-path" class="connection-path"></ol>
+              <div class="facts"><span>重连次数 <b id="reconnects">—</b></span><span>进行中请求 <b id="requests">—</b></span><span>后端事件数 <b id="event-count">—</b></span></div>
+            </article>
+            <article class="surface">
+              <div class="section-heading"><h2>最近告警</h2><a class="text-link" href="#logs">查看日志</a></div>
+              <div id="warnings" class="empty">正在读取日志</div>
+            </article>
+          </div>
+          <article class="surface">
+            <div class="section-heading"><h2>主机资源</h2><span id="host-name" class="muted"></span></div>
+            <div class="resource-grid">
+              <div><span>CPU 使用率</span><strong id="cpu-value">—</strong><p id="cpu-name" class="muted"></p><div id="cpu-cores" class="cores" aria-hidden="true"></div></div>
+              <div><span>系统内存</span><strong id="memory-value">—</strong><progress id="memory-bar" max="100" value="0" aria-label="系统内存使用率"></progress><p id="memory-detail" class="muted"></p></div>
+              <div><span>Alcor 进程</span><strong id="process-pid">—</strong><p id="process-memory" class="muted"></p><p id="node-version" class="muted"></p></div>
+            </div>
+          </article>
+          <article class="surface">
+            <div class="section-heading"><h2>QQ 账号会话</h2><span class="muted">单账号接入</span></div>
+            <div id="sessions" class="empty">尚未连接 QQ 账号</div>
+          </article>
+        </section>
+
+        <section id="page-processes" class="page" aria-labelledby="page-title" hidden>
+          <div class="columns">
+            <article class="surface">
+              <div class="section-heading"><h2>本机 QQ 进程</h2><button id="scan-processes" class="secondary">重新扫描</button></div>
+              <p class="muted">先在官方 QQ 客户端登录，再选择版本兼容的进程。</p>
+              <div id="process-list" class="empty">正在扫描 QQ 进程</div>
+            </article>
+            <article class="surface">
+              <h2>QQ 原生连接</h2>
+              <p id="native-connection" class="empty">正在读取连接状态</p>
+              <p class="muted">断开会停止当前 Alcor 启动的原生宿主。QQ 客户端继续运行。</p>
+              <button id="disconnect-native" class="danger" disabled>断开原生连接</button>
+            </article>
+          </div>
+        </section>
+
+        <section id="page-nodes" class="page" aria-labelledby="page-title" hidden>
+          <div class="columns">
+            <article class="surface">
+              <h2>OneBot 监听配置</h2>
+              <p class="muted">Alcor 提供 OneBot 11 HTTP 接口和正向 WebSocket 事件接口。</p>
+              <form id="node-form">
+                <fieldset id="node-fields" disabled>
+                  <label for="node-host">监听地址</label>
+                  <select id="node-host" aria-describedby="host-note"><option>127.0.0.1</option><option>::1</option><option>localhost</option></select>
+                  <small id="host-note">127.0.0.1 和 ::1 分别为 IPv4 与 IPv6 回环地址。</small>
+                  <label for="node-port">监听端口</label>
+                  <input id="node-port" type="number" min="1" max="65535" required aria-describedby="port-note">
+                  <small id="port-note">允许 1 至 65535。</small>
+                  <label class="check"><input id="node-readonly" type="checkbox">仅允许查询，禁止发送和修改</label>
+                  <button id="save-nodes" type="submit">保存节点配置</button>
+                </fieldset>
+                <p id="node-save-note" class="muted">配置在重启 Alcor 核心后生效。</p>
+              </form>
+              <div id="transport-list" class="facts"></div>
+              <details class="outbound-settings">
+                <summary>事件回调与反向连接</summary>
+                <p class="muted">将收到的事件推送给你配置的服务。仅本机地址允许 HTTP / WS，其他地址须使用 HTTPS / WSS。默认不启用。</p>
+                <form id="transport-form">
+                  <fieldset id="transport-fields" disabled>
+                    <h3>HTTP 事件回调</h3>
+                    <div id="callback-editors"></div>
+                    <button id="add-callback" class="secondary" type="button">添加 HTTP 回调</button>
+                    <h3>反向 WebSocket</h3>
+                    <div id="reverse-editors"></div>
+                    <button id="add-reverse" class="secondary" type="button">添加反向连接</button>
+                    <p class="muted">反向连接支持接收事件和调用动作。回调失败不自动重发，防止对接服务重复回复。保存后重启核心生效。</p>
+                    <button type="submit">保存回调与连接</button>
+                  </fieldset>
+                </form>
+                <p id="transport-note" class="muted" role="status"></p>
+              </details>
+            </article>
+            <article class="surface">
+              <h2>接入 Alcor Agent</h2>
+              <p class="muted">将当前运行的地址和访问令牌填入 Alcor Agent 的 OneBot 设置。切换前暂停旧 Agent 的自动回复，以防重复回复。</p>
+              <label for="http-url">OneBot HTTP 地址</label>
+              <div class="input-action"><input id="http-url" readonly><button class="secondary copy" data-copy="http-url" aria-label="复制 HTTP 地址">复制</button></div>
+              <label for="ws-url">OneBot WebSocket 地址</label>
+              <div class="input-action"><input id="ws-url" readonly><button class="secondary copy" data-copy="ws-url" aria-label="复制 WebSocket 地址">复制</button></div>
+              <label for="token-mask">访问令牌</label>
+              <div class="input-action"><input id="token-mask" type="password" readonly value="••••••••••••••••"><button id="copy-token" class="secondary">复制令牌</button></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="page-logs" class="page" aria-labelledby="page-title" hidden>
+          <article class="surface">
+            <div class="section-heading">
+              <h2>核心日志 <span id="log-state" class="badge" data-state="neutral">等待读取</span></h2>
+              <div class="tools"><button id="export-logs" class="secondary">导出日志</button><button id="clear-logs" class="danger">清空日志</button></div>
+            </div>
+            <div class="filter-row">
+              <div><label for="log-search">搜索日志</label><input id="log-search" type="search" placeholder="模块或内容"></div>
+              <div><label for="log-level">日志级别</label><select id="log-level"><option value="all">全部级别</option><option value="info">INFO</option><option value="warn">WARN</option><option value="error">ERROR</option></select></div>
+              <span id="log-count" class="muted"></span>
+            </div>
+            <p id="table-tip" class="muted">横向滚动表格可查看完整日志内容。</p>
+            <div class="table-scroll" tabindex="0" role="region" aria-label="日志列表" aria-describedby="table-tip"><table aria-label="核心日志"><thead><tr><th scope="col">时间</th><th scope="col">级别</th><th scope="col">模块</th><th scope="col">内容</th></tr></thead><tbody id="log-rows"><tr><td colspan="4">等待读取日志</td></tr></tbody></table></div>
+            <p class="muted">内存中最多保留 500 条日志。日志不记录访问令牌或聊天正文。</p>
+          </article>
+        </section>
+
+        <section id="page-settings" class="page" aria-labelledby="page-title" hidden>
+          <div class="columns">
+            <article class="surface">
+              <h2>显示与主题</h2>
+              <form id="settings-form">
+                <label for="appearance-theme">主题模式</label>
+                <select id="appearance-theme" aria-describedby="appearance-note"><option value="system">按本地时间自动切换</option><option value="light">日间</option><option value="dark">夜间</option></select>
+                <p class="muted" id="appearance-note">自动模式按本地时间切换，默认 07:00 日间、19:00 夜间。切换时间保存在当前浏览器。</p>
+                <fieldset id="theme-schedule" class="time-fields">
+                  <legend>自动切换时间</legend>
+                  <div><label for="light-start">日间开始</label><input type="time" id="light-start" required value="07:00"></div>
+                  <div><label for="dark-start">夜间开始</label><input type="time" id="dark-start" required value="19:00"></div>
+                </fieldset>
+                <label for="appearance-accent">强调色</label>
+                <select id="appearance-accent"><option value="violet">紫色（Alcor 默认）</option><option value="blue">蓝色</option><option value="green">绿色</option><option value="orange">琥珀色</option></select>
+                <label class="check"><input id="appearance-oled" type="checkbox">夜间使用纯黑背景</label>
+                <label class="check"><input id="appearance-compact" type="checkbox">紧凑显示</label>
+                <button type="submit">保存外观</button>
+              </form>
+            </article>
+            <article class="surface">
+              <h2>控制台访问</h2>
+              <dl class="settings-facts">
+                <div><dt>访问范围</dt><dd>本机回环地址</dd></div>
+                <div><dt>控制台认证</dt><dd>Alcor 访问令牌</dd></div>
+                <div><dt>QQ 登录</dt><dd>官方 QQ 客户端</dd></div>
+                <div><dt>令牌有效范围</dt><dd>解锁期间保存在页面内存</dd></div>
+                <div><dt>资源与日志</dt><dd>在本机读取和保存</dd></div>
+              </dl>
+              <button id="settings-lock" class="secondary">锁定控制台</button>
+            </article>
+          </div>
+        </section>
+
+        <section id="page-debug" class="page" aria-labelledby="page-title" hidden>
+          <div class="subnav" role="group" aria-label="调试工具视图">
+            <button data-debug="tester" aria-controls="debug-tester" aria-pressed="true">动作测试台</button>
+            <button data-debug="events" aria-controls="debug-events" aria-pressed="false">实时事件</button>
+            <button data-debug="catalog" aria-controls="debug-catalog" aria-pressed="false">API 浏览器</button>
+          </div>
+          <div id="debug-tester" class="debug-panel columns">
+            <article class="surface">
+              <h2>OneBot 动作</h2>
+              <p class="notice" data-state="warning">发送和修改类动作会作用于当前接入的 QQ 账号。</p>
+              <form id="action-form">
+                <label for="action-name">动作名称</label><input id="action-name" list="action-options" value="get_status" required spellcheck="false"><datalist id="action-options"></datalist>
+                <label for="action-params">参数（JSON 对象）</label><textarea id="action-params" rows="8" spellcheck="false" aria-describedby="action-param-note">{}</textarea>
+                <small id="action-param-note">按动作要求填写字段。无参数时使用 <code>{}</code>。</small>
+                <p id="action-error" class="field-error" role="alert"></p>
+                <button type="submit">执行动作</button>
+              </form>
+            </article>
+            <article class="surface"><h2>响应</h2><pre id="action-result" tabindex="0" aria-label="动作响应" aria-live="polite">尚未执行动作</pre></article>
+          </div>
+          <article id="debug-events" class="debug-panel surface" hidden>
+            <div class="section-heading"><h2>OneBot 实时事件</h2><button id="toggle-events" class="secondary">开始监听</button></div>
+            <p class="muted">最多显示最近 100 条事件的时间和类型。接收通道就绪后才会收到消息事件。</p>
+            <p id="event-state" role="status" class="muted">尚未开始监听</p>
+            <pre id="event-output" tabindex="0" aria-label="事件摘要">暂无事件</pre>
+          </article>
+          <article id="debug-catalog" class="debug-panel surface" hidden>
+            <div class="section-heading"><h2>OneBot 接口目录 <span id="action-count" class="badge"></span></h2></div>
+            <div class="filter-row">
+              <div><label for="api-search">搜索接口</label><input id="api-search" type="search" placeholder="动作名称"></div>
+              <div><label for="api-scope">原生实现状态</label><select id="api-scope"><option value="all">全部接口</option><option value="implemented">原生已实现</option><option value="not-implemented">原生待实现</option></select></div>
+            </div>
+            <p class="muted">实现状态表示是否有原生处理代码。各动作的实网验证范围可能不同。</p>
+            <div id="action-list" class="api-list"></div>
+          </article>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

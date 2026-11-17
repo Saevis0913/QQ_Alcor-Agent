@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "settings": {
+    "api": {
+      "videoMode": "frames",
+      "vision": true,
+      "video": true,
+      "temperature": 0.8,
+      "maxRounds": 12,
+      "timeoutMs": 180000,
+      "thinkingMode": "auto",
+      "thinkingEffort": "",
+      "thinkingBudget": 0
+    },
+    "webSearch": {
+      "enabled": true,
+      "maxResults": 6
+    },
+    "privatePolicy": {
+      "enabled": true,
+      "dailyLimit": 100,
+      "skipNewFriendGreeting": true
+    },
+    "qzone": {
+      "enabled": true,
+      "scope": "both",
+      "dailyLimit": 20,
+      "readTime": "09:00",
+      "timezone": "Asia/Shanghai"
+    },
+    "wakeDelayMs": 2000,
+    "drainDelayMs": 1200,
+    "maxConcurrentRuns": 2,
+    "sessionRetryAttempts": 2,
+    "send": {
+      "minGapMs": 1000,
+      "maxGapMs": 3000,
+      "byLengthMs": 20,
+      "maxPerMinute": 80,
+      "maxPerHour": 500,
+      "hardSplitAt": 4000,
+      "dedupeWindowMs": 8000
+    },
+    "proactive": {
+      "enabled": false,
+      "checkIntervalMinMs": 1800000,
+      "checkIntervalMaxMs": 5400000,
+      "idleThresholdMs": 1800000,
+      "probability": 0.25
+    },
+    "chatActive": {
+      "enabled": false,
+      "ttlMinutes": 30
+    },
+    "sticker": {
+      "enabled": true,
+      "promptMaxStickers": 20,
+      "collectEnabled": true,
+      "maxCollectPerHour": 10,
+      "sendTier": 2,
+      "policyVersion": 1
+    },
+    "store": {
+      "maxMessagesPerChat": 0,
+      "contextTier": 4,
+      "historyCount": 80,
+      "randomPercent": 10,
+      "replyPolicy": {
+        "mode": "all",
+        "probability": 10
+      },
+      "promptAnchor": {
+        "enabled": true,
+        "maxExtraRead": 5
+      },
+      "unifiedTier": true,
+      "keepSessionFiles": 0,
+      "peakSchedule": {
+        "enabled": false,
+        "peak": {
+          "start": "09:00",
+          "end": "18:00",
+          "sliderPos": 10,
+          "replyPolicy": {
+            "mode": "mentions",
+            "probability": 10
+          }
+        },
+        "valley": {
+          "sliderPos": 100,
+          "replyPolicy": {
+            "mode": "all",
+            "probability": 99.9
+          }
+        }
+      }
+    },
+    "commandMute": {
+      "enabled": true,
+      "durationMin": 30
+    },
+    "memory": {
+      "consolidateEnabled": true,
+      "consolidateMinIntervalMs": 21600000,
+      "useChatModel": true
+    },
+    "persona": {
+      "participation": "medium"
+    },
+    "personaUnified": true,
+    "tools": {
+      "enabled": true,
+      "crossChatSend": false,
+      "categories": {
+        "messaging": true,
+        "sticker": true,
+        "query": true,
+        "memory": true,
+        "web": true,
+        "knowledge": true,
+        "media": true,
+        "system": true
+      }
+    },
+    "extensions": {
+      "hotReload": false
+    },
+    "ui": {
+      "theme": "dark",
+      "themeSchedule": {
+        "lightStart": "07:00",
+        "darkStart": "19:00"
+      },
+      "showVision": true,
+      "refreshMs": 15000
+    },
+    "skills": {
+      "video-frames": {
+        "enabled": true
+      },
+      "speech-to-text": {
+        "enabled": true
+      },
+      "qzone-reader": {
+        "enabled": true
+      }
+    }
+  }
+}

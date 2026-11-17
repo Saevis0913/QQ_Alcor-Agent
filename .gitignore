@@ -1,0 +1,24 @@
+# 依赖
+node_modules/
+node_modules.*/
+
+# 运行时数据：配置、会话、记忆、用量、令牌，永远不进仓库
+data/
+electron-user-data/
+*.lock
+
+# 构建产物与临时目录
+temp/
+artifacts/release-*/
+dist/
+out/
+*.log
+*.tmp
+*.bak
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

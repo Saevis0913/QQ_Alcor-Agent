@@ -1,0 +1,10 @@
+{
+  "id": "qzone-reader",
+  "name": "QQ 空间只读快照",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "为本地插件提供 QQ 空间已读动态的只读快照。",
+  "enabledByDefault": true,
+  "capabilities": ["qzone.snapshot"]
+}

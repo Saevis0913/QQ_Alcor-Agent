@@ -1,0 +1,14 @@
+{
+  "id": "sticker-review",
+  "name": "QQ 表情收藏前审核",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "media",
+  "description": "收藏前审查恐怖、猎奇和恶俗图片。视觉模型无法明确判断时暂停入库。",
+  "enabledByDefault": true,
+  "capabilities": ["sticker.review"],
+  "settings": { "maxModelCallsPerDay": 60 },
+  "configSchema": {
+    "maxModelCallsPerDay": { "type": "number", "label": "每天最多审核模型调用次数", "description": "每个机器人账号单独计数，范围 1 至 500。命中本地审核缓存时无需调用模型。" }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "speech-to-text",
+  "name": "语音转文字",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "使用本地 Whisper 识别 QQ 语音，支持 SILK 和常见音频格式。",
+  "enabledByDefault": true,
+  "capabilities": ["media.transcribe", "media.transcribe.available"]
+}

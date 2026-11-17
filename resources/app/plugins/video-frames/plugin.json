@@ -1,0 +1,10 @@
+{
+  "id": "video-frames",
+  "name": "视频抽帧",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "使用本地 FFmpeg 均匀抽取视频画面，供视觉模型查看。",
+  "enabledByDefault": true,
+  "capabilities": ["video.frames", "video.frames.available"]
+}

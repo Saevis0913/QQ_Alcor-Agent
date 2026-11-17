@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alcor Agent</title>
+  <!-- 内容安全策略：控制台只应加载本机资源。
+       首屏主题预置脚本由本机 theme.js 同步加载，随 self 规则放行。
+       不再用 'unsafe-inline'（页面多处 innerHTML 拼接，一旦任何一处被注入，
+       unsafe-inline 会让 onerror= 等内联代码直接执行，CSP 形同虚设）。
+       内联样式仍放行（style-src）：主题/布局大量使用内联 style 属性。
+       2026-09-26 例外：意见收集/金句上传引入阿里云验证码 2.0（防垃圾上传），
+       官方要求必须动态加载 o.alicdn.com 的 SDK 并直连 aliyuncs 验签域，
+       故 script-src / connect-src / frame-src / worker-src 增列对应来源，
+       其余仍锁死在 'self'。 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://o.alicdn.com https://kondius.cn; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; media-src 'self' data: blob:; connect-src 'self' https://kondius.cn https://*.aliyuncs.com https://*.alicdn.com; frame-src https://*.aliyuncs.com https://*.alicdn.com https://kondius.cn; worker-src 'self' blob: https://*.alicdn.com https://kondius.cn; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/interface.css" />
+  <link rel="stylesheet" href="/session-detail.css" />
+  <link rel="stylesheet" href="/redesign.css?v=28" />
+  <script src="/icons.js"></script>
+  <script src="/theme-policy.js"></script>
+  <script src="/theme.js"></script>
+  <script src="/effort-slider.js"></script>
+<link rel="icon" href="/alcor-agent.png" type="image/png">
+</head>
+<body>
+  <aside id="app-sidebar" aria-label="Alcor Agent 主导航">
+    <div class="sidebar-brand"><div class="brand"><span class="brand-wordmark">Alcor <small>Agent</small></span></div></div>
+    <nav id="tabs" aria-label="功能导航"><div class="navigation-group"><p class="navigation-label">工作台</p><button class="tab" data-tab="usage" title="用量" aria-controls="view-usage"><svg class="navigation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3v17h17M8 15v-4m5 4V7m5 8V4"/></svg><span>用量</span></button><button class="tab" data-tab="skills" title="技能" aria-controls="view-skills"><svg class="navigation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 2.8 7.2L22 12l-7.2 2.8L12 22l-2.8-7.2L2 12l7.2-2.8Z"/></svg><span>技能</span></button><button class="tab" data-tab="plugins" title="插件" aria-controls="view-plugins"><svg class="navigation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h6V2a2 2 0 1 1 4 0v2h6v6h2a2 2 0 1 1 0 4h-2v6h-6v-2a2 2 0 1 0-4 0v2H4v-6h2a2 2 0 1 0 0-4H4Z"/></svg><span>插件</span></button></div><div class="navigation-group"><p class="navigation-label">对话与记忆</p><button class="tab active" data-tab="sessions" title="会话" aria-controls="view-sessions"><svg class="navigation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 1-8 8H5l-3 3V11a9 9 0 0 1 18 0Z"/><path d="M7 9h8M7 13h5"/></svg><span>会话</span></button><button class="tab" data-tab="chats" title="存档" aria-controls="view-chats"><svg class="navigation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="14" rx="3"/><path d="M2 4h20v4H2zM9 12h6"/></svg><span>存档</span></button><button class="tab" data-tab="memory" title="记忆" aria-controls="view-memory"><svg class="navigation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3a4 4 0 0 0-4 4v1a4 4 0 0 0-1 7 4 4 0 0 0 5 6h1V3Zm8 0a4 4 0 0 1 4 4v1a4 4 0 0 1 1 7 4 4 0 0 1-5 6h-1V3Z"/><path d="M5 10h4m6 4h4"/></svg><span>记忆</span></button></div><div class="navigation-group"><p class="navigation-label">连接与偏好</p><button class="tab" data-tab="alcor" title="Alcor" aria-controls="view-alcor"><svg class="navigation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 20 9-17 9 17M7 14h10"/><path d="M12 10v9m-4-3h8"/></svg><span>Alcor</span></button><button class="tab" data-tab="settings" title="设置" aria-controls="view-settings"><svg class="navigation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="18" r="2"/></svg><span>设置</span></button></div></nav>
+    <div class="sidebar-footer">
+      <button id="theme-btn" class="appearance-control" title="切换外观" aria-label="切换外观"></button>
+      <button id="appearance-settings-btn" class="appearance-settings" title="设置日夜切换时间"><span id="theme-schedule-summary">07:00 日间 / 19:00 夜间</span><span aria-hidden="true">↗</span></button>
+      <button class="nav-btn" id="open-site-btn" title="打开本机 Alcor 控制台">Alcor 控制台 <span aria-hidden="true">↗</span></button>
+    </div>
+    <div class="community-entries">    <button class="nav-btn hidden" id="quote-confirm-btn">确认金句</button>
+    <button class="nav-btn" id="quote-btn" title="把机器人的精彩发言收录到金句墙">金句上传</button>
+    <button class="nav-btn" id="feedback-btn" title="向作者反馈意见和建议">意见收集</button>
+    <button class="nav-btn nav-btn-market" id="skill-market-btn" title="打开 Skill 市场">Skill 市场</button>
+    <button class="nav-btn nav-btn-market" id="plugin-market-btn" title="打开插件市场">插件市场</button>
+    <button class="nav-btn nav-btn-persona" id="persona-plaza-btn" title="打开人设广场">人设广场</button>
+
+</div>
+  </aside>
+  <button id="nav-scrim" aria-label="关闭导航" hidden></button>
+
+  <header id="topbar">
+    <button id="nav-toggle" class="workspace-menu-button" aria-label="打开导航" aria-controls="app-sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+    <div class="workspace-heading">
+      <div class="ws-eyebrow"><span class="ws-mark" aria-hidden="true">A</span><span class="ws-crumb">Alcor Agent</span><span class="ws-dot" aria-hidden="true"></span><span class="ws-status">持续开发中</span></div>
+      <h1 id="workspace-title">会话</h1><p id="workspace-description">查看每次回复的完整过程</p>
+    </div>
+    <div class="workspace-actions">
+      <button id="pause-btn" class="btn btn-small btn-line" type="button">暂停</button>
+      <button id="alcor-group-btn" class="btn btn-small btn-square" type="button" title="群设置" aria-label="群设置">群</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-card">
+      <div class="loading-title">Alcor Agent 正在启动</div>
+      <div class="loading-sub" id="loading-status">正在启动 Alcor 与 OneBot 服务，请稍候…</div>
+      <div class="loading-spinner"></div>
+      <pre class="loading-logs" id="loading-logs"></pre>
+    </div>
+  </div>
+
+
+
+  <main id="layout" data-has-panes="true" data-mobile-pane="list">
+    <div id="pane-toolbar"><button id="pane-toggle" class="btn btn-small">查看详情</button><span class="hint">列表与详情</span></div>
+    <!-- 会话视图 -->
+    <section id="view-sessions" class="view active">
+      <aside id="session-list" class="list-pane">
+        <div class="list-head muted"><span id="session-count"></span><button class="list-head-btn" id="session-broadcast-btn" title="给选中的群/私聊批量发送一条消息">群发</button><button class="list-head-btn" id="session-clear-btn" title="清空全部已结束的会话记录（保留运行中/等待中的）">清空</button></div>
+        <div id="session-items"></div>
+        <div id="session-more" class="list-more muted"></div>
+        <div class="list-resizer" id="session-list-resizer" title="拖动调整侧栏宽度"></div>
+      </aside>
+      <div id="session-detail" class="detail-pane">
+        <div class="empty-hint workspace-empty"><span class="empty-orbit" aria-hidden="true"></span><h2>选择一条会话</h2><p>查看回复过程、工具调用和运行记录。</p><button class="btn" data-open-section="alcor">检查 Alcor 连接</button></div>
+      </div>
+    </section>
+
+    <!-- 存档视图 -->
+    <section id="view-chats" class="view">
+      <aside id="chat-list" class="list-pane">
+        <div class="list-head muted">消息存档</div>
+        <div id="chat-items"></div>
+        <div class="list-resizer" id="chat-list-resizer" title="拖动调整侧栏宽度"></div>
+      </aside>
+      <div id="chat-detail" class="detail-pane">
+        <div class="empty-hint workspace-empty"><span class="empty-orbit" aria-hidden="true"></span><h2>选择聊天记录</h2><p>选择左侧会话，查看已保存的消息与附件。</p></div>
+      </div>
+    </section>
+
+    <!-- Alcor 视图 -->
+    <section id="view-alcor" class="view">
+      <div id="alcor-page" class="alcor-pane"></div>
+    </section>
+
+    <!-- 记忆视图 -->
+    <section id="view-memory" class="view">
+      <aside id="memory-list" class="list-pane">
+        <div class="list-head muted">记忆</div>
+        <div id="memory-items"></div>
+        <div class="list-resizer" id="memory-list-resizer" title="拖动调整侧栏宽度"></div>
+      </aside>
+      <div id="memory-detail" class="detail-pane">
+        <div class="empty-hint workspace-empty"><span class="empty-orbit" aria-hidden="true"></span><h2>选择会话记忆</h2><p>选择左侧会话，查看和编辑记忆。</p></div>
+      </div>
+    </section>
+
+    <!-- 用量视图 -->
+    <section id="view-usage" class="view">
+      <div id="usage-page" class="usage-pane"></div>
+    </section>
+
+    <!-- 技能视图：从设置页独立出来（原先和模型/聊天设置挤在一起，找不到） -->
+    <section id="view-skills" class="view">
+      <div id="skills-page" class="usage-pane"></div>
+    </section>
+
+    <!-- 插件视图：与技能并列的独立页签。
+         两型的区别在"谁决定何时执行"（确定性 vs 模型决定），是使用者最关心的一件事，
+         所以分成两页各自成组 —— 混在一页里既看不出类型，也数不清各有多少。 -->
+    <section id="view-plugins" class="view">
+      <div id="plugins-page" class="usage-pane"></div>
+    </section>
+
+    <!-- 设置视图 -->
+    <section id="view-settings" class="view">
+      <aside id="settings-sidebar" class="settings-sidebar"></aside>
+      <div id="settings-form" class="settings-pane"></div>
+    </section>
+  </main>
+
+  <footer id="agent-status" aria-label="运行状态">
+    <div class="agent-connection">
+      <span id="onebot-dot" class="dot dot-off" aria-hidden="true"></span>
+      <span id="onebot-label">OneBot 未连接</span>
+    </div>
+    <span id="model-label">模型：—</span>
+    <span id="usage-label">今日用量：—</span>
+    <span id="search-count-label" title="合计 web_search 和 web_fetch 调用次数">今日联网：—</span>
+    <div id="readiness-dots" class="readiness-dots" role="group" aria-label="QQ、Alcor、OneBot 和配置就绪状态">
+      <button type="button" class="rdot" data-target="alcor" title="QQ 后端未就绪" aria-label="QQ 后端未就绪"></button>
+      <button type="button" class="rdot" data-target="alcor" title="Alcor 未运行" aria-label="Alcor 未运行"></button>
+      <button type="button" class="rdot" data-target="alcor" title="OneBot 未连接" aria-label="OneBot 未连接"></button>
+      <button type="button" class="rdot" data-target="settings" title="配置未完成" aria-label="配置未完成"></button>
+    </div>
+  </footer>
+
+  <!-- ESM 桥（vendor 模块 → window）先执行；其后各段普通脚本按 defer 顺序执行，
+       module 与 defer 共享同一条按文档顺序的延迟队列，保证桥先于 00-core.js。 -->
+  <script type="module" src="/app.js"></script>
+  <script defer src="/app/00-core.js"></script>
+  <script defer src="/app/01-boot.js"></script>
+  <script defer src="/app/02-sse-sessions.js"></script>
+  <script defer src="/app/03-alcor.js"></script>
+  <script defer src="/app/04-archive-usage.js"></script>
+  <script defer src="/app/05-memory-settings.js"></script>
+  <script defer src="/app/06-settings-render.js"></script>
+  <script defer src="/app/07-settings-events.js"></script>
+  <script defer src="/app/08-modals.js"></script>
+  <script defer src="/app/09-community.js"></script>
+  <script defer src="/app/10-feedback.js"></script>
+  <script defer src="/app/12-concept2-ui.js"></script>
+  <script defer src="/app/13-workspace-shell.js"></script>
+  <script defer src="/app/14-installation.js"></script>
+  <script defer src="/app/15-inbox.js"></script>
+  <script defer src="/app/16-qzone.js"></script>
+  <script defer src="/app/11-init.js"></script>
+
+  <!-- 阿里云验证码 2.0（意见收集/金句上传共用）：容器常驻；AliyunCaptchaConfig 与
+       SDK 动态加载都在 10-feedback.js 内（CSP 不放行无 hash 内联脚本）。 -->
+  <div id="captcha-element"></div>
+  <button id="captcha-trigger" type="button" aria-label="人机验证触发器（隐藏元素，SDK 内部使用）" style="position:fixed;left:-9999px;top:0" aria-hidden="true" tabindex="-1"></button>
+</body>
+</html>

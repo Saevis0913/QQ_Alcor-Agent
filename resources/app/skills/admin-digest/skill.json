@@ -1,0 +1,10 @@
+{
+  "id": "admin-digest",
+  "name": "管理员私聊摘要",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "管理员在 QQ 私聊请求时，直接返回机器人状态和脱敏后的近期异常。",
+  "enabledByDefault": true,
+  "requires": ["admin.error_digest"]
+}

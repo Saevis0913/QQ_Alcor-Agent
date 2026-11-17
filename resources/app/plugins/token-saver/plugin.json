@@ -1,0 +1,6 @@
+{
+  "id": "token-saver", "name": "完成发送后节省调用", "version": "1.0.0", "apiVersion": 1,
+  "category": "utility", "enabledByDefault": true,
+  "description": "消息发送已确认、没有失败和后续动作时，在本地结束本轮，省去只为结束运行的模型调用。保持人设和发言不变；实际节省量随对话而异。",
+  "capabilities": ["reply.local-policy"], "settings": {}
+}

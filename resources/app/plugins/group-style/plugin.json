@@ -1,0 +1,82 @@
+{
+  "id": "group-style",
+  "name": "群聊风格学习",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "按群统计近期句长、标点、句尾语气词和连续分条节奏。休息时间写入本群摘要，参考公开话题并复盘自己的应答。原有人设继续生效。",
+  "enabledByDefault": true,
+  "permissions": [
+    "web_fetch"
+  ],
+  "settings": {
+    "fallbackStart": "01:00",
+    "fallbackEnd": "07:00",
+    "sampleRows": 80,
+    "minSamples": 6,
+    "nightlyGroups": 4,
+    "outputBudget": 500,
+    "publicTrends": true,
+    "trendSource": "Google Trends · 台湾",
+    "maxModelCallsPerDay": 60
+  },
+  "configSchema": {
+    "maxModelCallsPerDay": {
+      "type": "number",
+      "label": "每个机器人账号每天的模型调用上限",
+      "description": "按北京时间每日重置。范围 1–500，失败或中止的已开始调用也占名额，重启保留计数。",
+      "min": 1,
+      "max": 500,
+      "step": 1
+    },
+    "fallbackStart": {
+      "type": "string",
+      "label": "休息开始（备选）",
+      "description": "本机时间 HH:MM。人设没有唯一明确的休息时段时使用。"
+    },
+    "fallbackEnd": {
+      "type": "string",
+      "label": "休息结束（备选）",
+      "description": "本机时间 HH:MM。人设没有唯一明确的休息时段时使用。"
+    },
+    "sampleRows": {
+      "type": "number",
+      "label": "每群本地采样条数",
+      "min": 10,
+      "max": 200,
+      "step": 1
+    },
+    "minSamples": {
+      "type": "number",
+      "label": "白天注入所需最少样本数",
+      "min": 3,
+      "max": 40,
+      "step": 1
+    },
+    "nightlyGroups": {
+      "type": "number",
+      "label": "每次休息整理的群数上限",
+      "min": 1,
+      "max": 12,
+      "step": 1
+    },
+    "outputBudget": {
+      "type": "number",
+      "label": "每群复盘的模型输出 Token 上限",
+      "min": 128,
+      "max": 900,
+      "step": 50
+    },
+    "publicTrends": {
+      "type": "boolean",
+      "label": "读取公开话题",
+      "description": "只读取所选 RSS 的标题，受联网搜索开关和浏览锁定限制。聊天提到近期归档的标题时可参考。关闭时仍整理本群档案。"
+    },
+    "trendSource": {
+      "type": "enum",
+      "label": "公开话题来源",
+      "values": ["Google Trends · 台湾", "中国新闻网 · 即时新闻"],
+      "description": "Google Trends 提供台湾搜索趋势，域名为 trends.google.com。中国新闻网提供中文即时新闻标题，域名为 www.chinanews.com.cn。"
+    }
+  }
+}

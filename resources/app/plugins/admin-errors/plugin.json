@@ -1,0 +1,16 @@
+{
+  "id": "admin-errors",
+  "name": "管理员异常汇总",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "在内存中汇总当前机器人账号近期发送、工具、会话和状态异常。默认不主动发私信。",
+  "enabledByDefault": true,
+  "capabilities": ["admin.error_digest"],
+  "settings": { "autoReport": false, "reportToQQ": "", "intervalSeconds": 300 },
+  "configSchema": {
+    "autoReport": { "type": "boolean", "label": "主动私信提醒", "description": "启用后只向当前管理员发送节流合并的异常提醒。默认关闭。" },
+    "reportToQQ": { "type": "string", "label": "接收提醒的管理员 QQ", "description": "必须填写现任管理员号码。留空时取管理员名单首位。" },
+    "intervalSeconds": { "type": "number", "label": "主动提醒间隔（秒）", "description": "重复异常会合并发送，两条提醒之间至少等待此间隔。范围 60 至 3600 秒。" }
+  }
+}

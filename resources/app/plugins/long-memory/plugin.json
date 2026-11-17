@@ -1,0 +1,90 @@
+{
+  "id": "long-memory",
+  "name": "长期记忆归档",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "按机器人账号和发言者的 QQ 号，压缩昨日聊天的偏好、明确事实与约定，保留日期和来源。支持自动引用，私聊摘要默认只留在原私聊。",
+  "enabledByDefault": true,
+  "capabilities": [
+    "memory.lookup",
+    "memory.change"
+  ],
+  "settings": {
+    "archivePrivate": true,
+    "autoRecall": true,
+    "shareGroupFacts": true,
+    "sharePrivateFacts": false,
+    "lookbackDays": 14,
+    "recallLimit": 4,
+    "dailySourceLimit": 8,
+    "rowsPerSource": 100,
+    "outputBudget": 750,
+    "maxModelCallsPerDay": 60
+  },
+  "configSchema": {
+    "maxModelCallsPerDay": {
+      "type": "number",
+      "label": "每个机器人账号每天的模型调用上限",
+      "description": "按北京时间每日重置。范围 1–500，失败或中止的已开始调用也占名额，重启保留计数。",
+      "min": 1,
+      "max": 500,
+      "step": 1
+    },
+    "archivePrivate": {
+      "type": "boolean",
+      "label": "归档私聊",
+      "description": "开启后私聊摘要也会使用已配置的归档模型，关闭后新的私聊内容不进入归档。"
+    },
+    "autoRecall": {
+      "type": "boolean",
+      "label": "自动引用相关记忆",
+      "description": "在当前发言者明确且摘要符合来源设置时，附上少量历史资料。"
+    },
+    "shareGroupFacts": {
+      "type": "boolean",
+      "label": "允许跨会话引用群聊可共享事实",
+      "description": "仅引用模型标为可共享的摘要，仍保留原群来源。"
+    },
+    "sharePrivateFacts": {
+      "type": "boolean",
+      "label": "允许跨会话引用私聊可共享事实",
+      "description": "默认关闭。开启后，可在其他私聊或群聊引用被标为可共享的摘要。"
+    },
+    "lookbackDays": {
+      "type": "number",
+      "label": "默认回查天数",
+      "min": 1,
+      "max": 90,
+      "step": 1
+    },
+    "recallLimit": {
+      "type": "number",
+      "label": "默认每次检索条数",
+      "min": 1,
+      "max": 12,
+      "step": 1
+    },
+    "dailySourceLimit": {
+      "type": "number",
+      "label": "每天归档会话上限",
+      "min": 1,
+      "max": 20,
+      "step": 1
+    },
+    "rowsPerSource": {
+      "type": "number",
+      "label": "每个会话最多读取条数",
+      "min": 10,
+      "max": 200,
+      "step": 1
+    },
+    "outputBudget": {
+      "type": "number",
+      "label": "每个会话的模型输出 Token 上限",
+      "min": 128,
+      "max": 1200,
+      "step": 50
+    }
+  }
+}

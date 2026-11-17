@@ -1,0 +1,14 @@
+{
+  "id": "memory-recall",
+  "name": "长期记忆检索与更正",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "按 QQ 号和日期查询当前会话有权查看的长期记忆。可明确请求更正或删除原会话中自己的记忆，管理员可在管理员私聊维护档案。",
+  "enabledByDefault": true,
+  "requires": [
+    "memory.lookup",
+    "memory.change"
+  ],
+  "settings": {}
+}

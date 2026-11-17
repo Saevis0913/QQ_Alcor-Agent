@@ -1,0 +1,1 @@
+Alcor native core includes ws (MIT) and MinHook (BSD 2-clause). See vendor/ws/LICENSE and vendor/minhook/LICENSE.txt. Node.js is bundled under ../../runtime; full license at ../../LICENSE.node.txt. Whisper licenses are under ../media-runtime. QQ is a separate prerequisite.

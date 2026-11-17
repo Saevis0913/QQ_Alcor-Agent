@@ -1,0 +1,36 @@
+{
+  "name": "alcor-agent",
+  "version": "0.2.3",
+  "private": false,
+  "description": "Alcor Agent：基于 QQ Agent 开发，适配 Alcor 原生框架",
+  "type": "module",
+  "main": "electron/main.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "js-yaml": "^5.4.1",
+    "pdfjs-dist": "5.4.624",
+    "sax": "1.6.1",
+    "silk-wasm": "3.7.1",
+    "undici": "^6.28.0",
+    "ws": "^8.18.0",
+    "yauzl": "3.4.0"
+  },
+  "license": "MIT",
+  "author": "Kondius",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kondius/qq-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Kondius/qq-agent/issues"
+  },
+  "homepage": "https://github.com/Kondius/qq-agent#readme",
+  "productName": "Alcor Agent",
+  "upstream": {
+    "name": "QQ Agent",
+    "version": "0.4.0",
+    "author": "Kondius"
+  }
+}

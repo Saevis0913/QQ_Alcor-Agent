@@ -1,0 +1,786 @@
+{
+  "sourceSha256": "be1e5d67e9c9f5313b2c89164471311dc3cedc80f794c42bac2eae46ab157d06",
+  "note": "Observed API names only; not runtime implementation evidence",
+  "actions": [
+    {
+      "action": "_del_group_notice",
+      "module": "extended"
+    },
+    {
+      "action": "_get_friend_dress",
+      "module": "extended"
+    },
+    {
+      "action": "_get_group_notice",
+      "module": "extended"
+    },
+    {
+      "action": "_get_model_show",
+      "module": "extended"
+    },
+    {
+      "action": "_mark_all_as_read",
+      "module": "extended"
+    },
+    {
+      "action": "_send_group_notice",
+      "module": "extended"
+    },
+    {
+      "action": "_set_model_show",
+      "module": "extended"
+    },
+    {
+      "action": ".get_word_slices",
+      "module": "extended"
+    },
+    {
+      "action": "add_custom_face",
+      "module": "extended"
+    },
+    {
+      "action": "add_group_tag",
+      "module": "group-admin"
+    },
+    {
+      "action": "bot_exit",
+      "module": "extended"
+    },
+    {
+      "action": "can_send_image",
+      "module": "info"
+    },
+    {
+      "action": "can_send_record",
+      "module": "info"
+    },
+    {
+      "action": "cancel_group_album_media_like",
+      "module": "group-album"
+    },
+    {
+      "action": "cancel_group_todo",
+      "module": "extended"
+    },
+    {
+      "action": "check_url_safely",
+      "module": "extended"
+    },
+    {
+      "action": "clean_cache",
+      "module": "extended"
+    },
+    {
+      "action": "clean_stream_temp_file",
+      "module": "stream-file"
+    },
+    {
+      "action": "click_inline_keyboard_button",
+      "module": "extended"
+    },
+    {
+      "action": "comment_qzone",
+      "module": "qzone"
+    },
+    {
+      "action": "complete_group_todo",
+      "module": "extended"
+    },
+    {
+      "action": "create_collection",
+      "module": "extended"
+    },
+    {
+      "action": "create_flash_task",
+      "module": "extended"
+    },
+    {
+      "action": "create_group_file_folder",
+      "module": "group-file"
+    },
+    {
+      "action": "del_group_album_media",
+      "module": "group-album"
+    },
+    {
+      "action": "delete_custom_face",
+      "module": "extended"
+    },
+    {
+      "action": "delete_essence_msg",
+      "module": "extended"
+    },
+    {
+      "action": "delete_flash_file",
+      "module": "extended"
+    },
+    {
+      "action": "delete_friend",
+      "module": "friend"
+    },
+    {
+      "action": "delete_group_file",
+      "module": "group-file"
+    },
+    {
+      "action": "delete_group_file_folder",
+      "module": "group-file"
+    },
+    {
+      "action": "delete_group_folder",
+      "module": "extended"
+    },
+    {
+      "action": "delete_group_tag",
+      "module": "group-admin"
+    },
+    {
+      "action": "delete_msg",
+      "module": "message"
+    },
+    {
+      "action": "delete_qzone_msg",
+      "module": "qzone"
+    },
+    {
+      "action": "do_group_album_comment",
+      "module": "group-album"
+    },
+    {
+      "action": "download_file",
+      "module": "extended"
+    },
+    {
+      "action": "download_file_image_stream",
+      "module": "stream-download"
+    },
+    {
+      "action": "download_file_record_stream",
+      "module": "stream-download"
+    },
+    {
+      "action": "download_file_stream",
+      "module": "stream-download"
+    },
+    {
+      "action": "download_fileset",
+      "module": "extended"
+    },
+    {
+      "action": "fetch_custom_face",
+      "module": "extended"
+    },
+    {
+      "action": "fetch_custom_face_detail",
+      "module": "extended"
+    },
+    {
+      "action": "fetch_emoji_like",
+      "module": "extended"
+    },
+    {
+      "action": "fetch_face_entity",
+      "module": "system-face"
+    },
+    {
+      "action": "fetch_super_face_id",
+      "module": "system-face"
+    },
+    {
+      "action": "fetch_sys_faces",
+      "module": "system-face"
+    },
+    {
+      "action": "forward_friend_single_msg",
+      "module": "extended"
+    },
+    {
+      "action": "forward_group_single_msg",
+      "module": "extended"
+    },
+    {
+      "action": "friend_poke",
+      "module": "extended"
+    },
+    {
+      "action": "get_ai_characters",
+      "module": "extended"
+    },
+    {
+      "action": "get_ai_record",
+      "module": "extended"
+    },
+    {
+      "action": "get_clientkey",
+      "module": "extended"
+    },
+    {
+      "action": "get_collection_list",
+      "module": "extended"
+    },
+    {
+      "action": "get_cookies",
+      "module": "extended"
+    },
+    {
+      "action": "get_credentials",
+      "module": "extended"
+    },
+    {
+      "action": "get_csrf_token",
+      "module": "extended"
+    },
+    {
+      "action": "get_doubt_friends_add_request",
+      "module": "extended"
+    },
+    {
+      "action": "get_emoji_likes",
+      "module": "extended"
+    },
+    {
+      "action": "get_essence_msg_list",
+      "module": "extended"
+    },
+    {
+      "action": "get_file",
+      "module": "extended"
+    },
+    {
+      "action": "get_fileset_id",
+      "module": "extended"
+    },
+    {
+      "action": "get_fileset_info",
+      "module": "extended"
+    },
+    {
+      "action": "get_flash_file_list",
+      "module": "extended"
+    },
+    {
+      "action": "get_flash_file_url",
+      "module": "extended"
+    },
+    {
+      "action": "get_forward_msg",
+      "module": "extended"
+    },
+    {
+      "action": "get_friend_list",
+      "module": "friend"
+    },
+    {
+      "action": "get_friend_msg_history",
+      "module": "extended"
+    },
+    {
+      "action": "get_friends_with_category",
+      "module": "extended"
+    },
+    {
+      "action": "get_group_admin_settings",
+      "module": "group-admin"
+    },
+    {
+      "action": "get_group_album_list",
+      "module": "group-album"
+    },
+    {
+      "action": "get_group_album_media_list",
+      "module": "group-album"
+    },
+    {
+      "action": "get_group_at_all_remain",
+      "module": "extended"
+    },
+    {
+      "action": "get_group_detail_info",
+      "module": "extended"
+    },
+    {
+      "action": "get_group_file_system_info",
+      "module": "extended"
+    },
+    {
+      "action": "get_group_file_url",
+      "module": "group-file"
+    },
+    {
+      "action": "get_group_files_by_folder",
+      "module": "group-file"
+    },
+    {
+      "action": "get_group_honor_info",
+      "module": "group-info"
+    },
+    {
+      "action": "get_group_ignore_add_request",
+      "module": "extended"
+    },
+    {
+      "action": "get_group_ignored_notifies",
+      "module": "extended"
+    },
+    {
+      "action": "get_group_info",
+      "module": "group-info"
+    },
+    {
+      "action": "get_group_info_ex",
+      "module": "extended"
+    },
+    {
+      "action": "get_group_list",
+      "module": "group-info"
+    },
+    {
+      "action": "get_group_member_info",
+      "module": "group-info"
+    },
+    {
+      "action": "get_group_member_list",
+      "module": "group-info"
+    },
+    {
+      "action": "get_group_msg_history",
+      "module": "extended"
+    },
+    {
+      "action": "get_group_root_files",
+      "module": "group-file"
+    },
+    {
+      "action": "get_group_share_link",
+      "module": "group-info"
+    },
+    {
+      "action": "get_group_shut_list",
+      "module": "extended"
+    },
+    {
+      "action": "get_group_signed_list",
+      "module": "extended"
+    },
+    {
+      "action": "get_group_system_msg",
+      "module": "group-info"
+    },
+    {
+      "action": "get_group_tags",
+      "module": "group-admin"
+    },
+    {
+      "action": "get_group_todo_list",
+      "module": "extended"
+    },
+    {
+      "action": "get_image",
+      "module": "extended"
+    },
+    {
+      "action": "get_login_info",
+      "module": "info"
+    },
+    {
+      "action": "get_mini_app_ark",
+      "module": "extended"
+    },
+    {
+      "action": "get_msg",
+      "module": "message"
+    },
+    {
+      "action": "get_msg_emoji_likes",
+      "module": "extended"
+    },
+    {
+      "action": "get_online_clients",
+      "module": "extended"
+    },
+    {
+      "action": "get_private_file_url",
+      "module": "group-file"
+    },
+    {
+      "action": "get_profile_like",
+      "module": "extended"
+    },
+    {
+      "action": "get_qun_album_list",
+      "module": "group-album"
+    },
+    {
+      "action": "get_qzone_feeds",
+      "module": "qzone"
+    },
+    {
+      "action": "get_qzone_msg_detail",
+      "module": "qzone"
+    },
+    {
+      "action": "get_qzone_msg_list",
+      "module": "qzone"
+    },
+    {
+      "action": "get_recent_contact",
+      "module": "extended"
+    },
+    {
+      "action": "get_record",
+      "module": "extended"
+    },
+    {
+      "action": "get_rkey_server",
+      "module": "extended"
+    },
+    {
+      "action": "get_share_link",
+      "module": "extended"
+    },
+    {
+      "action": "get_status",
+      "module": "info"
+    },
+    {
+      "action": "get_stranger_info",
+      "module": "friend"
+    },
+    {
+      "action": "get_unidirectional_friend_list",
+      "module": "extended"
+    },
+    {
+      "action": "get_version_info",
+      "module": "info"
+    },
+    {
+      "action": "group_poke",
+      "module": "extended"
+    },
+    {
+      "action": "like_qzone",
+      "module": "qzone"
+    },
+    {
+      "action": "list_filesets",
+      "module": "extended"
+    },
+    {
+      "action": "mark_group_msg_as_read",
+      "module": "extended"
+    },
+    {
+      "action": "mark_msg_as_read",
+      "module": "extended"
+    },
+    {
+      "action": "mark_private_msg_as_read",
+      "module": "extended"
+    },
+    {
+      "action": "modify_custom_face",
+      "module": "extended"
+    },
+    {
+      "action": "move_custom_face_to_front",
+      "module": "extended"
+    },
+    {
+      "action": "move_group_file",
+      "module": "group-file"
+    },
+    {
+      "action": "nc_get_packet_status",
+      "module": "extended"
+    },
+    {
+      "action": "nc_get_user_status",
+      "module": "extended"
+    },
+    {
+      "action": "rename_flash_file",
+      "module": "extended"
+    },
+    {
+      "action": "rename_group_file",
+      "module": "group-file"
+    },
+    {
+      "action": "rename_group_file_folder",
+      "module": "group-file"
+    },
+    {
+      "action": "request_decrypt_key",
+      "module": "extended"
+    },
+    {
+      "action": "search_sys_faces",
+      "module": "system-face"
+    },
+    {
+      "action": "send_ark_share",
+      "module": "extended"
+    },
+    {
+      "action": "send_custom_face",
+      "module": "message"
+    },
+    {
+      "action": "send_flash_msg",
+      "module": "extended"
+    },
+    {
+      "action": "send_forward_msg",
+      "module": "extended"
+    },
+    {
+      "action": "send_group_ai_record",
+      "module": "extended"
+    },
+    {
+      "action": "send_group_ark_share",
+      "module": "extended"
+    },
+    {
+      "action": "send_group_forward_msg",
+      "module": "extended"
+    },
+    {
+      "action": "send_group_msg",
+      "module": "message"
+    },
+    {
+      "action": "send_like",
+      "module": "extended"
+    },
+    {
+      "action": "send_msg",
+      "module": "message"
+    },
+    {
+      "action": "send_poke",
+      "module": "extended"
+    },
+    {
+      "action": "send_private_forward_msg",
+      "module": "extended"
+    },
+    {
+      "action": "send_private_msg",
+      "module": "message"
+    },
+    {
+      "action": "send_qzone_msg",
+      "module": "qzone"
+    },
+    {
+      "action": "send_tuwen_ark",
+      "module": "extended"
+    },
+    {
+      "action": "set_diy_online_status",
+      "module": "extended"
+    },
+    {
+      "action": "set_doubt_friends_add_request",
+      "module": "extended"
+    },
+    {
+      "action": "set_essence_msg",
+      "module": "extended"
+    },
+    {
+      "action": "set_friend_add_request",
+      "module": "request"
+    },
+    {
+      "action": "set_friend_remark",
+      "module": "extended"
+    },
+    {
+      "action": "set_friends_category",
+      "module": "extended"
+    },
+    {
+      "action": "set_group_add_option",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_add_request",
+      "module": "request"
+    },
+    {
+      "action": "set_group_admin",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_album_media_like",
+      "module": "group-album"
+    },
+    {
+      "action": "set_group_anonymous",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_anonymous_ban",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_ban",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_card",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_kick",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_kick_members",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_leave",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_member_invite_policy",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_member_permissions",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_name",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_new_member_history_visibility",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_portrait",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_reaction",
+      "module": "extended"
+    },
+    {
+      "action": "set_group_remark",
+      "module": "extended"
+    },
+    {
+      "action": "set_group_robot_add_option",
+      "module": "extended"
+    },
+    {
+      "action": "set_group_search",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_special_title",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_group_todo",
+      "module": "extended"
+    },
+    {
+      "action": "set_group_whole_ban",
+      "module": "group-admin"
+    },
+    {
+      "action": "set_input_status",
+      "module": "extended"
+    },
+    {
+      "action": "set_msg_emoji_like",
+      "module": "extended"
+    },
+    {
+      "action": "set_online_status",
+      "module": "extended"
+    },
+    {
+      "action": "set_qq_avatar",
+      "module": "extended"
+    },
+    {
+      "action": "set_qq_profile",
+      "module": "extended"
+    },
+    {
+      "action": "set_qzone_ban",
+      "module": "qzone"
+    },
+    {
+      "action": "set_qzone_msg_right",
+      "module": "qzone"
+    },
+    {
+      "action": "set_restart",
+      "module": "extended"
+    },
+    {
+      "action": "set_self_longnick",
+      "module": "extended"
+    },
+    {
+      "action": "share_group_ex",
+      "module": "extended"
+    },
+    {
+      "action": "share_peer",
+      "module": "extended"
+    },
+    {
+      "action": "test_download_stream",
+      "module": "stream-download"
+    },
+    {
+      "action": "trans_group_file",
+      "module": "extended"
+    },
+    {
+      "action": "translate_en2zh",
+      "module": "extended"
+    },
+    {
+      "action": "unlike_qzone",
+      "module": "qzone"
+    },
+    {
+      "action": "upload_file_stream",
+      "module": "stream-file"
+    },
+    {
+      "action": "upload_forward_msg",
+      "module": "extended"
+    },
+    {
+      "action": "upload_foward_msg",
+      "module": "extended"
+    },
+    {
+      "action": "upload_group_file",
+      "module": "group-file"
+    },
+    {
+      "action": "upload_image_to_qun_album",
+      "module": "group-album"
+    },
+    {
+      "action": "upload_private_file",
+      "module": "group-file"
+    },
+    {
+      "action": "upload_video_to_qun_album",
+      "module": "group-album"
+    }
+  ]
+}
