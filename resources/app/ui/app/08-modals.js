@@ -1245,7 +1245,9 @@ async function saveConfig({ quiet = false } = {}) {
     }
     const adminQQs = [...new Set(entered)];
     duplicateAdmins = entered.length - adminQQs.length;
-    patch.privatePolicy = { adminQQs };
+    // 与「私聊规则」同属「聊天与人格」栏目，会被同一份 patch 一起提交；
+    // 必须合并而不是整体赋值，否则后者会把 adminQQs 抹掉（填完立刻变成“已取消全部管理员”）。
+    patch.privatePolicy = { ...(patch.privatePolicy || {}), adminQQs };
     adminField.removeAttribute('aria-invalid');
     if (adminStatus) { adminStatus.textContent = '正在保存…'; adminStatus.style.color = ''; }
   }
@@ -1408,11 +1410,15 @@ async function saveConfig({ quiet = false } = {}) {
     patch.allowAllWhenEmpty = allowAllBox ? !!allowAllBox.checked : (c.allowAllWhenEmpty === true);
     if (el('#cfg-private-policy')) {
       const limit = val('#cfg-private-limit').trim();
+      const notice = val('#cfg-private-notice').trim();
+      const fallbackLimit = Number.isSafeInteger(c.privatePolicy?.dailyLimit) ? c.privatePolicy.dailyLimit : 0;
+      // 留空不等于 0/null：空值回落到现值，避免 normalizePrivatePolicy 因非法值整单拒绝保存。
       patch.privatePolicy = {
+        ...(patch.privatePolicy || {}),
         enabled: chk('#cfg-private-policy'),
         skipNewFriendGreeting: chk('#cfg-private-greeting'),
-        dailyLimit: limit === '' ? null : Number(limit),
-        limitNotice: val('#cfg-private-notice'),
+        dailyLimit: limit === '' ? fallbackLimit : Number(limit),
+        limitNotice: notice === '' ? (c.privatePolicy?.limitNotice || '今天的私聊消息已达上限，请明天再发。') : notice,
         specialFriendQQs: parseList(val('#cfg-private-special'))
       };
     }
