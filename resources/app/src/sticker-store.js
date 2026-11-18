@@ -58,7 +58,8 @@ function stamp(value) {
 }
 
 function tagsText(entry) {
-  return [entry.desc, entry.localNote, (entry.tags ?? []).join(' ')].filter(Boolean).join(' ');
+  // tagsText 是给「外部导入/迁移」留的直给字段，和 tags 数组一起参与检索。
+  return [entry.desc, entry.localNote, (entry.tags ?? []).join(' '), entry.tagsText].filter(Boolean).join(' ');
 }
 
 /** 索引行：[id, scope, createdAt, name, bytes, lastUsedAt, hash, tagsText] */

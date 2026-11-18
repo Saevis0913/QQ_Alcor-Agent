@@ -61,7 +61,8 @@ export function buildSystemPrompt({ persona, skillContext, extraSections = [] } 
   //    插在中间 —— 插在中间会把后面所有核心规则的字节位置推来推去，系统提示的
   //    缓存前缀（通常占 token 大头）直接归零。核心静态段全部在前，动态段殿后。
   const skillSections = [...collectSkillSections(skillContext || {}), ...(Array.isArray(extraSections) ? extraSections : [])]
-    .map((x) => ({ priority: 50, ...x }))
+    // 调用方偶尔会直接传字符串，这里兜成内容段，避免整段静默消失。
+    .map((x) => (typeof x === 'string' ? { priority: 50, content: x } : { priority: 50, ...x }))
     // 同 priority 的段必须按固定次序排：sort 不稳定会让 nsfw-gate(99) 这类
     // 动态段有时插在静态段前、有时在后，整段系统提示的字节布局随排序抖动，
     // 前缀缓存命中率大幅波动。次序键 = priority 降序 +（id 相等时）数组原序。
@@ -82,6 +83,14 @@ export function buildSystemPrompt({ persona, skillContext, extraSections = [] } 
     search: settings.webSearch?.enabled !== false,
     stickerSettings: settings.sticker
   })];
+
+  // 人设正文（设置 → 聊天与人格 → 人设）：以前只有在自定义系统提示词里写
+  // {roleText} 才会出现，默认路径下管理员填的人设被完全忽略 —— 行为和"人设"这两个字
+  // 对不上。这里固定插在核心规则之后、Skill 之前：位置稳定，不会破坏缓存前缀。
+  const roleTemplate = String(cfg.systemPromptOverride ?? '');
+  const roleText = String(cfg.roleText ?? '').trim();
+  // 自定义提示词里已经写了 {roleText} 时不再重复追加，否则正文会出现两遍人设。
+  if (roleText && !roleTemplate.includes('{roleText}')) parts.push('', '【角色设定】', roleText);
 
   // 注入 Skill 提示词片段（已按 priority 降序；一律排在核心规则之后）
   parts.push(...renderSkillSections(skillSections));
@@ -369,7 +378,8 @@ export function resolveContextTier({ triggerEntries = [], selfNickname = '', bot
 
   // 拍一拍 = 轻量召唤：触发批里有"拍了拍我"的事件时按 1 档响应（与被艾特同级）。
   // 判定依据是 isPoke 标记 + 文本里"拍了拍 我"（后者兜底老存档里没有标记的记录）。
-  const pokeMe = (triggerEntries || []).some((e) => e?.isPoke && /拍了拍\s*我/.test(String(e?.text ?? '')));
+  // 老存档里没有 isPoke 标记，只有文本「拍了拍我」；两者取其一即可，否则老记录永远唤不醒。
+  const pokeMe = (triggerEntries || []).some((e) => e?.isPoke === true || /拍了拍\s*我/.test(String(e?.text ?? '')));
   if (pokeMe) {
     return { tier: 1, count: historyCount(), reason: '拍了拍我', shouldRespond: true };
   }
