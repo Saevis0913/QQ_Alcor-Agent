@@ -439,6 +439,7 @@ export class StickerManager {
       if (desc) patch.desc = String(desc).slice(0, 60);
       if (Array.isArray(tags) && tags.length) patch.tags = [...new Set([...(existing.tags ?? []), ...tags])].slice(0, 8);
       if (localNote) patch.localNote = String(localNote).slice(0, 160);
+      if (!patch.reviewVersion) patch.reviewVersion = 1;
       const saved = this.store.upsert(patch);
       this.entries = this.entries.map((row) => row.id === saved.id ? saved : row);
       saveStickerStore(this.entries);
@@ -457,6 +458,9 @@ export class StickerManager {
       localNote: String(localNote || '').slice(0, 160),
       usage: '',
       source: 'local',
+      // 人工添加即视为已审核：否则 buildStickerContext 只列 reviewVersion===1 的条目，
+      // 手动加进来的表情会进不了提示词、也进不了工具列表。
+      reviewVersion: 1,
       contentHash: hash,
       bytes: buffer.length,
       useCount: 0,
