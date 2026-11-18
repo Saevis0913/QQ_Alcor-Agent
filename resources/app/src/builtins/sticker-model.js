@@ -71,8 +71,8 @@ async function modelParts(buffer) {
   return urls.map((url) => ({ type: 'image_url', image_url: { url } }));
 }
 
-const reviewPrompt = '逐张审核 QQ 表情的恐怖、猎奇和恶俗内容，结合画面和图中文字，动图查看同编号全部帧。每项明确返回 clear、present 或 uncertain：无法判断或信息不足时一律返回 uncertain，这类会按放行处理，只有确实违规才返回 present。只返回 JSON 数组，格式 [{"index":1,"horror":"clear","grotesque":"clear","vulgar":"clear"}]。';
-const labelPrompt = '逐张判断 QQ 表情是否适合当前机器人设。只有可能自然使用才 keep=true。标签描述情绪和场景，使用简短中文。每个编号恰好返回一项。只返回 JSON 数组，格式 [{"index":1,"keep":true,"tags":["开心"],"emotion":"喜悦","usage":"祝贺朋友"}]。不保留时也要返回 index、keep、tags、emotion、usage，可用空标签和空字符串。';
+const reviewPrompt = '逐张审核 QQ 表情的恐怖、猎奇和恶俗内容，结合画面和图中文字，动图查看同编号全部帧。判断门槛放到最低：只有画面明确出现血腥、猎奇、色情或恶俗内容才返回 present；画质差、看不懂、拿不准、信息不足、普通夸张表情一律返回 uncertain（按放行处理）。只返回 JSON 数组，格式 [{"index":1,"horror":"clear","grotesque":"clear","vulgar":"clear"}]。';
+const labelPrompt = '逐张判断 QQ 表情是否适合当前机器人设。拿不准、看不清、信息不足时一律 keep=true（宁可保留，稍后还能补标签）。标签描述情绪和场景，使用简短中文。每个编号恰好返回一项。只返回 JSON 数组，格式 [{"index":1,"keep":true,"tags":["开心"],"emotion":"喜悦","usage":"祝贺朋友"}]。不保留时也要返回 index、keep、tags、emotion、usage，可用空标签和空字符串。';
 
 export function createStickerModel({
   runtime, dir = path.join(DATA_DIR, 'builtins'), mode,
@@ -110,14 +110,34 @@ export function createStickerModel({
       else pending.set(key, buffers[index]);
     });
     if (pending.size) {
-      if (!visionEnabled()) throw new Error('视觉模型未开启，无法处理表情');
+      // 判断不清不算违规：模型不可用、返回解析失败、行数不符时，
+      // 审核按 uncertain 放行、标签按「保留但暂不打标签」兜底，收藏不会因此失败。
+      const fallbackRow = () => (reviewing
+        ? { horror: 'uncertain', grotesque: 'uncertain', vulgar: 'uncertain', approved: true }
+        : { keep: true, tags: [], emotion: '', usage: '' });
+      const applyFallback = () => {
+        for (const key of pending.keys()) if (!result.has(key)) result.set(key, fallbackRow());
+      };
+      if (!visionEnabled()) { applyFallback(); return keys.map((key) => result.get(key)); }
       const content = [{ type: 'text', text: reviewing ? '请审核以下表情。' : `人设资料：${personaText}` }];
-      for (const [index, buffer] of [...pending.values()].entries()) {
+      const requestKeys = [];
+      for (const [key, buffer] of pending) {
         check();
-        content.push({ type: 'text', text: `表情编号 ${index + 1}` }, ...await modelParts(buffer));
+        let parts;
+        try {
+          parts = await modelParts(buffer);
+        } catch {
+          // 动图抽帧失败（缺 ffmpeg、帧数异常）或格式识别不了：这张直接兜底，
+          // 不把整批一起失败，其余表情照常送审/打标签。
+          result.set(key, fallbackRow());
+          continue;
+        }
+        requestKeys.push(key);
+        content.push({ type: 'text', text: `表情编号 ${requestKeys.length}` }, ...parts);
       }
+      if (!requestKeys.length) return keys.map((key) => result.get(key));
       check();
-      let parsed;
+      let parsed = null;
       try {
         const response = await runtime.complete({
           messages: [
@@ -128,28 +148,37 @@ export function createStickerModel({
         }, { extensionId, account, chatKey, purpose: mode, signal, session });
         check();
         const raw = response?.message?.content ?? response?.content;
-        if (typeof raw !== 'string' || raw.length > 10000) throw new Error(error);
+        if (typeof raw !== 'string' || raw.length > 10000) throw new Error('empty');
         parsed = JSON.parse(raw.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1'));
       } catch {
         check();
-        throw new Error(error);
+        parsed = null;
       }
-      if (!Array.isArray(parsed) || parsed.length !== pending.size) throw new Error(error);
       const keyed = new Map();
-      for (const row of parsed) {
-        const value = normalize(row);
-        if (!value || !Number.isInteger(row.index) || row.index < 1 ||
-            row.index > pending.size || keyed.has(row.index)) throw new Error(error);
-        keyed.set(row.index, value);
+      if (Array.isArray(parsed)) {
+        for (const row of parsed) {
+          const value = normalize(row);
+          if (!value || !Number.isInteger(row.index) || row.index < 1 ||
+              row.index > requestKeys.length || keyed.has(row.index)) continue;
+          keyed.set(row.index, value);
+        }
       }
-      const changes = Object.fromEntries([...pending.keys()].map((key, index) => {
+      const changes = {};
+      requestKeys.forEach((key, index) => {
         const row = keyed.get(index + 1);
-        result.set(key, row);
-        return [key, row];
-      }));
+        if (row) {
+          result.set(key, row);
+          changes[key] = row;
+        } else {
+          result.set(key, fallbackRow());
+        }
+      });
       check();
-      const rows = Object.entries({ ...readCache(file), ...changes }).slice(-MAX_CACHE_ROWS);
-      writeCache(file, Object.fromEntries(rows));
+      // 只缓存模型真正给出的结果；兜底行不写缓存，下次还给它一次机会。
+      if (Object.keys(changes).length) {
+        const rows = Object.entries({ ...readCache(file), ...changes }).slice(-MAX_CACHE_ROWS);
+        writeCache(file, Object.fromEntries(rows));
+      }
     }
     check();
     return keys.map((key) => result.get(key));

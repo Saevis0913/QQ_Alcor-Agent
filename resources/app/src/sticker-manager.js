@@ -61,6 +61,29 @@ export class StickerManager {
     this.syncing = null;
     this.collectTimes = [];
     this.healLocalPaths();
+    this.repairBytes();
+  }
+
+  /**
+   * 大小自愈：旧条目可能没记 bytes（收藏链路早先没写这一个字段），
+   * 从本地文件补一次，避免「原图 0 B」这类假统计。窗口最多 512 条，代价可忽略。
+   */
+  repairBytes() {
+    let fixed = 0;
+    for (const entry of this.entries) {
+      if (Number(entry.bytes) > 0) continue;
+      const file = localStickerPath(entry.localFile || entry.url);
+      if (!file) continue;
+      try {
+        const size = fs.statSync(file).size;
+        if (!size) continue;
+        entry.bytes = size;
+        this.store.upsert(entry);
+        fixed += 1;
+      } catch { /* 文件没了就跳过，prune 会处理 */ }
+    }
+    if (fixed) saveStickerStore(this.entries);
+    return fixed;
   }
 
   /**

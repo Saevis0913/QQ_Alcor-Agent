@@ -35,18 +35,74 @@ function localEntry(ctx, stickerId) {
   const id = String(stickerId ?? '');
   const scope = currentScope(ctx);
   const entry = ctx.stickers.entries.find((row) => row.id === id && row.id.startsWith(scope));
-  if (!entry || !OPAQUE_FILE.test(entry.qqFile) || !usable(entry)) throw new Error('当前会话的本地库没有这个可用表情');
+  if (!entry || (!OPAQUE_FILE.test(entry.qqFile) && !entry.localFile) || !usable(entry)) throw new Error('当前会话的本地库没有这个可用表情');
   return entry;
 }
 
 export function listNativeStickers(ctx, args = {}) {
   const entries = nativeStickerEntries(ctx);
+  // 有标签的条目直接按文字检索；没有标签的顺手补一次（不在返回结果里等它）。
+  backfillStickerTags(ctx).catch(() => {});
   return { ...formatStickerList(entries, args.query, Math.min(100, Math.max(1, Number(args.limit) || 24))), source: 'agent-local' };
+}
+
+const backfillAt = new Map();
+const BACKFILL_RETRY_MS = 10 * 60 * 1000;
+
+/**
+ * 给「没有标签」的条目补标签：手动收藏、早期版本收藏、以及标签为空的老数据。
+ * 只跑当前会话作用域、每次最多 max 张、同一作用域 10 分钟内不重复跑。
+ */
+export async function backfillStickerTags(ctx, { max = 4, force = false } = {}) {
+  const scope = currentScope(ctx);
+  const now = Date.now();
+  if (!force && now - (backfillAt.get(scope) || 0) < BACKFILL_RETRY_MS) return { labeled: 0, skipped: 'debounced' };
+  const provider = skillManager.getCapabilityProviders('sticker.label', ctx)
+    .find((row) => row.skillId === 'sticker-library')?.fn;
+  if (!provider) return { labeled: 0, skipped: 'no-provider' };
+  const pool = ctx.stickers.entries.filter((row) => row.id.startsWith(scope) &&
+    (!Array.isArray(row.tags) || row.tags.length === 0));
+  if (!pool.length) return { labeled: 0 };
+  const picked = [];
+  const buffers = [];
+  for (const row of pool.slice(0, max)) {
+    const file = localStickerPath(row.localFile);
+    if (!file) continue;
+    try { buffers.push(await fs.readFile(file)); picked.push(row); } catch { /* 文件已丢，交给丢失标记处理 */ }
+  }
+  if (!buffers.length) return { labeled: 0 };
+  backfillAt.set(scope, now);
+  let rows;
+  try {
+    rows = await provider({ account: String(ctx.selfId), chatKey: ctx.chatKey, session: ctx.session ?? null,
+      signal: ctx.signal, buffers });
+  } catch {
+    return { labeled: 0, failed: true };
+  }
+  if (!Array.isArray(rows)) return { labeled: 0 };
+  let labeled = 0;
+  const entries = ctx.stickers.entries.map((row) => {
+    const index = picked.findIndex((item) => item.id === row.id);
+    const labels = index >= 0 ? rows[index] : null;
+    const tags = Array.isArray(labels?.tags) ? labels.tags.filter(Boolean) : [];
+    if (!tags.length && !labels?.emotion && !labels?.usage) return row;
+    labeled += 1;
+    return normalizeStickerEntry({ ...row, desc: row.desc || labels?.emotion || '',
+      tags: tags.length ? tags : row.tags, usage: labels?.usage || row.usage });
+  });
+  if (labeled) {
+    saveStickerStore(entries);
+    ctx.stickers.entries = entries;
+  }
+  return { labeled };
 }
 
 export function nativeStickerEntries(ctx) {
   const scope = currentScope(ctx);
-  return ctx.stickers.entries.filter((row) => row.id.startsWith(scope) && OPAQUE_FILE.test(row.qqFile) && usable(row));
+  // 条目只要有一个可取图的来源就算可用：QQ 消息文件 id，或本地转存文件。
+  // 否则将来从上传/URL 加入的条目永远不会出现在列表与检索里。
+  return ctx.stickers.entries.filter((row) => row.id.startsWith(scope) &&
+    (OPAQUE_FILE.test(row.qqFile) || Boolean(row.localFile)) && usable(row));
 }
 
 export async function collectNativeSticker(ctx, { messageId, note } = {}) {
@@ -146,7 +202,12 @@ export async function collectNativeStickerBatch(ctx, { messageIds, note, classif
   check();
   const approved = candidates.filter((_, index) => !reviewer || reviews?.[index]?.approved === true);
   if (!approved.length && !classify) throw new Error('表情未通过审核（判定为恐怖、猎奇或恶俗内容），未收藏');
-  const labels = classify && approved.length ? await classify({
+  // 手动收藏（工具 collect_sticker）与巡检补标签都不带 classify：
+  // 这里回退到插件提供的 sticker.label 能力，保证"收藏即带标签"。
+  const labeler = classify || (approved.length
+    ? skillManager.getCapabilityProviders('sticker.label', ctx).find((provider) => provider.skillId === 'sticker-library')?.fn ?? null
+    : null);
+  const labels = labeler && approved.length ? await labeler({
     ...request, buffers: approved.map(({ buffer }) => buffer)
   }) : null;
   check();
@@ -197,7 +258,7 @@ function saveCollection(ctx, scope, candidates, note, reviewed) {
       const localFile = pathToFileURL(filename).href;
       const text = String(note || prior?.localNote || item.summary || '').slice(0, 160);
       const entry = normalizeStickerEntry({
-        ...prior, id, qqFile: item.file, emojiId: '', url: localFile, localFile, contentHash: hash,
+        ...prior, id, qqFile: item.file, emojiId: '', url: localFile, localFile, contentHash: hash, bytes: buffer.length,
         reviewVersion: reviewed ? 1 : undefined, desc: labels?.emotion || text.slice(0, 40),
         localNote: text, source: 'ai', tags: labels?.tags || prior?.tags, usage: labels?.usage || prior?.usage
       });
@@ -284,6 +345,16 @@ export async function sendReceivedMedia(ctx, args = {}, { send, sendImage } = {}
   return { messageId: result?.message_id ?? null, sticker: target.sticker, file: target.file };
 }
 
+/** 记一次丢失：persistFailed 之后选择器会跳过它，巡检才有机会重建。 */
+function markStickerMissing(ctx, stickerId) {
+  try {
+    const entries = ctx.stickers.entries.map((row) => row.id === stickerId
+      ? normalizeStickerEntry({ ...row, persistFailed: true }) : row);
+    saveStickerStore(entries);
+    ctx.stickers.entries = entries;
+  } catch { /* 标记失败不影响本次跳过 */ }
+}
+
 export async function sendNativeSticker(ctx, { stickerId, replyToMessageId, atUserId } = {}, { send } = {}) {
   if (String(replyToMessageId ?? '').trim() || String(atUserId ?? '').trim()) {
     const error = new Error('已收表情只能单独发送：不能带引用或 @');
@@ -294,7 +365,15 @@ export async function sendNativeSticker(ctx, { stickerId, replyToMessageId, atUs
   if (typeof send !== 'function') throw new Error('未连接已收表情发送队列');
   const stickerPolicy = ensureStickerDecision(ctx.session, { selfId: ctx.selfId, chatKey: ctx.chatKey, sticker: getConfig().sticker });
   checkStickerDispatch(stickerPolicy, { selfId: ctx.selfId, chatKey: ctx.chatKey, sticker: getConfig().sticker, signal: ctx.signal });
-  const result = await send(entry.qqFile, { stickerPolicy, signal: ctx.signal, expected_self_id: ctx.selfId,
-    beforeDispatch: () => { localEntry(ctx, stickerId); } });
+  let result;
+  try {
+    result = await send(entry.qqFile, { stickerPolicy, signal: ctx.signal, expected_self_id: ctx.selfId,
+      beforeDispatch: () => { localEntry(ctx, stickerId); } });
+  } catch (error) {
+    // 素材在 QQ 侧过期、或本地转存被清理：标记这一条并静默跳过，不把 400 抛回对话。
+    if (!/^(NATIVE_STICKER_|STICKER_)/.test(String(error?.code ?? ''))) throw error;
+    markStickerMissing(ctx, entry.id);
+    return { stickerId: entry.id, messageId: null, skipped: true, reason: String(error.code) };
+  }
   return { stickerId: entry.id, messageId: result?.message_id ?? null,...(result?.bookkeepingWarning?{bookkeepingWarning:result.bookkeepingWarning}:{}) };
 }
