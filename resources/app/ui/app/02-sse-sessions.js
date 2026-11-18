@@ -748,7 +748,9 @@ function sessionDecision(session) {
     ? session.toolExecutions.filter(call => call.name !== 'finish')
     : (Array.isArray(session.messages) ? session.messages : []).filter(item => item?.toolCall && item.toolCall.name !== 'finish').map(item => item.toolCall);
   if (executions.length) {
-    const names = [...new Set(executions.map(call => (Object.hasOwn(SESSION_TOOL_LABELS, call.name) && SESSION_TOOL_LABELS[call.name]) || call.name))];
+    const names = [...new Set(executions.map(call => (Object.hasOwn(SESSION_TOOL_LABELS, call.name) && SESSION_TOOL_LABELS[call.name])
+      || (typeof TOOL_META !== 'undefined' && Object.hasOwn(TOOL_META, call.name) && TOOL_META[call.name].name)
+      || call.name))];
     rows.push(['工具调用', `${executions.length} 次 · ${names.join('、')}`]);
   }
   if (session.finishReason) rows.push(['结束摘要', String(session.finishReason)]);
