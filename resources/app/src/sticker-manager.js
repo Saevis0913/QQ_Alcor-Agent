@@ -1,13 +1,15 @@
 // 运行期表情库管理：同步 QQ 收藏表情 + 本地认知层（备注/笔记/使用计数）。
 // 纯函数在 stickers.js；这里管缓存、TTL 和 OneBot 交互。
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { getConfig, DATA_DIR } from './config.js';
 import { safeFetchBinary } from './safe-fetch.js';
 import {
-  loadStickerStore, saveStickerStore, mergeStickerLibrary,
-  findSticker, formatStickerList, applyStickerNote, markStickerUsed
+  loadStickerStore, saveStickerStore, mergeStickerLibrary, normalizeStickerEntry,
+  findSticker, formatStickerList, applyStickerNote, markStickerUsed, useStickerStore
 } from './stickers.js';
+import { openStickerStore, STICKER_MEMORY_WINDOW } from './sticker-store.js';
 
 // 收藏表情的本地图片目录：收藏时把图片转存到这里（QQ 图床 rkey 会过期，
 // 直接存 url 的话过 1 小时左右 send_sticker 就发不出去了 —— 这是"收藏频发故障"的根因）。
@@ -51,6 +53,9 @@ import { detectImageExt } from './image-type.js';
 export class StickerManager {
   constructor(onebot) {
     this.onebot = onebot;
+    // 索引层：内存里只有一页窗口，其余按需从 docs 读（收藏越多也不会越占内存）。
+    this.store = openStickerStore({ dir: DATA_DIR });
+    useStickerStore(this.store);
     this.entries = loadStickerStore();
     this.syncedAt = 0;
     this.syncing = null;
@@ -185,10 +190,16 @@ export class StickerManager {
   }
 
   note(id, patch) {
-    const result = applyStickerNote(this.entries, id, patch);
-    this.entries = result.entries;
-    if (result.entry) saveStickerStore(this.entries);
-    return result.entry;
+    // 以索引里的完整记录为准（条目可能已经滑出内存窗口）。
+    const current = this.store.get(id) || this.entries.find((row) => row.id === id);
+    if (!current) return null;
+    const result = applyStickerNote([current], id, patch);
+    const entry = result.entry;
+    if (!entry) return null;
+    this.store.upsert(entry);
+    const at = this.entries.findIndex((row) => row.id === entry.id);
+    if (at >= 0) this.entries[at] = entry; else { this.entries.unshift(entry); if (this.entries.length > STICKER_MEMORY_WINDOW) this.entries.length = STICKER_MEMORY_WINDOW; }
+    return entry;
   }
 
   markUsed(id, context = '') {
@@ -365,5 +376,106 @@ export class StickerManager {
     } catch {
       return null;
     }
+  }
+  // ── 控制台用的查询与管理（内存只看窗口，其余交给 SQLite）────────────────
+
+  /** 收藏上限：0 = 不限。超过上限后只停自动收藏，手动仍可加。 */
+  get maxEntries() {
+    const raw = Number(getConfig().sticker?.maxEntries);
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+  }
+
+  stats() {
+    const count = typeof this.store.count === 'function' ? this.store.count() : this.entries.length;
+    return {
+      count,
+      bytes: typeof this.store.bytes === 'function' ? this.store.bytes() : 0,
+      window: this.entries.length,
+      windowLimit: STICKER_MEMORY_WINDOW,
+      maxEntries: this.maxEntries,
+      disk: stickerImagesDir()
+    };
+  }
+
+  /** 分页列表（排序/检索/标签过滤都在 SQL 里做）。 */
+  listPage(query = {}) {
+    const page = this.store.list(query);
+    return { ...page, stats: this.stats() };
+  }
+
+  /** 删除一条：DB 行 + 内存窗口 + 没有其他条目引用的原图。 */
+  removeEntry(id) {
+    const key = String(id ?? '');
+    if (!key) throw Object.assign(new Error('缺少表情 id'), { code: 'STICKER_ID_REQUIRED' });
+    const hashes = this.store.remove(key);
+    this.entries = this.entries.filter((row) => row.id !== key);
+    for (const hash of hashes) {
+      const still = this.store.findByHash?.('native_global_', hash);
+      if (still) continue;
+      this.#deleteBlobsFor(key, hash);
+    }
+    return { removed: key };
+  }
+
+  #deleteBlobsFor(id, hash) {
+    const dir = stickerImagesDir();
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch { return; }
+    for (const name of names) {
+      const hit = hash ? name.includes(hash) : name.startsWith(id);
+      if (!hit) continue;
+      try { fs.rmSync(path.join(dir, name), { force: true }); } catch { /* 单个失败继续 */ }
+    }
+  }
+
+  /** 手动添加一张（文件字节）：按内容哈希去重，重复则只补标签。 */
+  addLocalSticker({ buffer, tags = [], desc = '', localNote = '' }) {
+    if (!buffer?.length) throw Object.assign(new Error('没有收到图片字节'), { code: 'STICKER_BYTES_REQUIRED' });
+    const hash = createHash('sha256').update(buffer).digest('hex');
+    const existing = this.store.findByHash('native_local_', hash)
+      || this.entries.find((row) => row.contentHash === hash);
+    if (existing) {
+      const patch = { ...existing, updatedAt: new Date().toISOString() };
+      if (desc) patch.desc = String(desc).slice(0, 60);
+      if (Array.isArray(tags) && tags.length) patch.tags = [...new Set([...(existing.tags ?? []), ...tags])].slice(0, 8);
+      if (localNote) patch.localNote = String(localNote).slice(0, 160);
+      const saved = this.store.upsert(patch);
+      this.entries = this.entries.map((row) => row.id === saved.id ? saved : row);
+      saveStickerStore(this.entries);
+      return { entry: saved, duplicate: true };
+    }
+    const imgDir = stickerImagesDir();
+    fs.mkdirSync(imgDir, { recursive: true });
+    const dest = path.join(imgDir, `alcor-local-${hash}${detectImageExt(buffer)}`);
+    fs.writeFileSync(dest, buffer);
+    const entry = normalizeStickerEntry({
+      id: `native_local_${hash.slice(0, 24)}`,
+      qqFile: null,
+      url: `file:///${dest.replace(/\\/g, '/')}`,
+      desc: String(desc || '').slice(0, 60),
+      tags: Array.isArray(tags) ? [...new Set(tags)].slice(0, 8) : [],
+      localNote: String(localNote || '').slice(0, 160),
+      usage: '',
+      source: 'local',
+      contentHash: hash,
+      bytes: buffer.length,
+      useCount: 0,
+      lastUsedAt: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    entry.bytes = buffer.length;          // normalize 会丢未知字段，这里补回真实大小
+    const saved = this.store.upsert(entry);
+    this.entries.unshift(saved);
+    if (this.entries.length > STICKER_MEMORY_WINDOW) this.entries.length = STICKER_MEMORY_WINDOW;
+    saveStickerStore(this.entries);
+    return { entry: saved, duplicate: false };
+  }
+
+  /** 定期管理：清掉没有条目引用、且超过 keepDays 的原图。 */
+  prune({ keepDays = 7 } = {}) {
+    const keepMs = Math.max(1, Number(keepDays) || 7) * 24 * 3600 * 1000;
+    const result = this.store.pruneOrphans(DATA_DIR, keepMs);
+    return { ...result, stats: this.stats() };
   }
 }

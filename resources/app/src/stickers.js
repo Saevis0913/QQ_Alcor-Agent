@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DATA_DIR } from './config.js';
 import { stickerTier } from './sticker-policy.js';
 
-const STICKER_FILE = path.join(DATA_DIR, 'stickers.json');
+export const STICKER_FILE = path.join(DATA_DIR, 'stickers.json');
 
 export function nowIso() {
   return new Date().toISOString();
@@ -48,7 +48,19 @@ export function normalizeStickerEntry(raw) {
   };
 }
 
+let activeStore = null;
+
+/** 接上 SQLite 索引：之后的读写都走它，JSON 只在首次迁移时读一次。 */
+export function useStickerStore(store) {
+  activeStore = store || null;
+}
+
+export function getStickerStore() {
+  return activeStore;
+}
+
 export function loadStickerStore(file = STICKER_FILE) {
+  if (activeStore) return activeStore.recentAll();
   try {
     let text = fs.readFileSync(file, 'utf8');
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
@@ -61,6 +73,10 @@ export function loadStickerStore(file = STICKER_FILE) {
 }
 
 export function saveStickerStore(entries, file = STICKER_FILE) {
+  if (activeStore) {
+    activeStore.upsertMany(entries);
+    return;
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(entries, null, 2), 'utf8');
@@ -217,7 +233,10 @@ export function applyStickerNote(entries, id, patch = {}) {
   const idx = list.findIndex((e) => e.id === target.id);
   const next = normalizeStickerEntry({
     ...target,
-    localNote: patch.note !== undefined ? String(patch.note ?? '').trim() : target.localNote,
+    localNote: patch.localNote !== undefined
+      ? String(patch.localNote ?? '').trim()
+      : (patch.note !== undefined ? String(patch.note ?? '').trim() : target.localNote),
+    desc: patch.desc !== undefined ? String(patch.desc ?? '').slice(0, 60) : target.desc,
     tags: Array.isArray(patch.tags) ? patch.tags.map(String).map((s) => s.trim()).filter(Boolean).slice(0, 20) : target.tags,
     usage: patch.usage !== undefined ? String(patch.usage ?? '').trim() : target.usage,
     source: patch.source || target.source || 'ai',

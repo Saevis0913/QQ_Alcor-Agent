@@ -36,6 +36,7 @@ import { verifyInstallCodes, installByCode } from './market.js';
 import { extensionWorkspace } from './extension-workspace.js';
 import { collectEnvironment, formatEnvironmentReport } from './environment-check.mjs';
 import { contactChoices } from './contacts.js';
+import { createStickerRoutes } from './sticker-routes.js';
 import { fetchMessageImage } from './onebot.js';
 import { detectDialect as detectThinkingDialect } from './thinking.js';
 import { createQzoneRoutes } from './qzone-routes.js';
@@ -95,6 +96,7 @@ export function createRoutes(deps) {
   };
 
   return [
+    ...createStickerRoutes({ stickers: deps.stickers, readBody, log }),
     ...createQzoneRoutes(deps.qzone),
     ...createDesktopActions(deps.onRestart),
     ...createChatActionRoutes({ onebot, store, inbox, readBody, emit, standard: deps.standard,

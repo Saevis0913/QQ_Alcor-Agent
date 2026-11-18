@@ -243,6 +243,9 @@ export const DEFAULT_CONFIG = {
     promptMaxStickers: 20,
     collectEnabled: true,
     maxCollectPerHour: 10,
+    // 收藏总量上限（0 = 不限）。达到上限后**只停自动收藏**，手动添加仍然可用。
+    // 内存里始终只放一页窗口，条数增长不影响常驻内存。
+    maxEntries: 2000,
     // 1 不发 / 2 偶尔发 / 3 正常 / 4 经常发。旧 encourage 按索引 + 1 迁移。
     sendTier: 2,
     policyVersion: 1
