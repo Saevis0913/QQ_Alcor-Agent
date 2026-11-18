@@ -4,7 +4,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DATA_DIR, getConfig } from './config.js';
-import { ensureStickerDecision, checkStickerDispatch } from './sticker-policy.js';
 import { extractAnimatedImageFrames, isAnimatedImage } from './group-media.js';
 import { compressImage } from './image-compress.js';
 import { detectImageType } from './image-type.js';
@@ -17,6 +16,8 @@ import { stickerHash, STICKER_BATCH_LIMIT } from './builtins/sticker-model.js';
 
 const OPAQUE_FILE = /^alcor-media-[a-f0-9]{64}$/;
 const MAX_BYTES = 12 * 1024 * 1024;
+// 兜底走 base64，比直传多占三分之一；单独设一个更紧的上限。
+const FALLBACK_BYTES = 6 * 1024 * 1024;
 const MAX_BATCH_BYTES = 20 * 1024 * 1024;
 const reviewEnabled = () => isSkillEnabledInConfig('sticker-review');
 const usable = (entry) => !reviewEnabled() || entry.reviewVersion === 1;
@@ -343,14 +344,23 @@ export function resolveReceivedMedia(ctx, { messageId, stickerId, file } = {}) {
   return { file: picked.file, sticker: Boolean(picked.sticker) };
 }
 
+/**
+ * 显式表情的通行证：只要调用方点名了某张表情（工具参数、用户指定），
+ * 就无条件放行——档位、概率、最近十条配额、总开关都不参与。
+ * 每条消息仍然只带一张图，重复发送由发送层的去重与限频兜住。
+ */
+function explicitStickerPolicy(ctx) {
+  return { version: 1, selfId: String(ctx.selfId), chatKey: ctx.chatKey, tier: 0,
+    requested: true, explicit: true, eligible: true, roll: null, attempted: false };
+}
+
 export async function sendReceivedMedia(ctx, args = {}, { send, sendImage } = {}) {
   const target = resolveReceivedMedia(ctx, args);
   let result;
   if (target.sticker) {
     if (typeof send !== 'function') throw new Error('未连接已收表情发送队列');
-    // 这里的表情是「按消息转发/按 id 发送」，属于明确请求，不受主动配图概率限制（仍受总开关与窗口上限约束）。
-  const stickerPolicy = ensureStickerDecision(ctx.session, { selfId: ctx.selfId, chatKey: ctx.chatKey, sticker: getConfig().sticker, requested: true });
-    checkStickerDispatch(stickerPolicy, { selfId: ctx.selfId, chatKey: ctx.chatKey, sticker: getConfig().sticker, signal: ctx.signal });
+    // 这里的表情是「按消息转发/按 id 发送」，属于明确请求：不受档位、概率、窗口与总开关限制。
+    const stickerPolicy = explicitStickerPolicy(ctx);
     result = await send(target.file, { stickerPolicy, signal: ctx.signal, expected_self_id: ctx.selfId,
       beforeDispatch: () => { if (target.stickerId) localEntry(ctx, target.stickerId); } });
   } else {
@@ -380,7 +390,8 @@ export async function sendSavedStickerFile(ctx, entry) {
   const file = localStickerPath(entry.localFile || entry.url);
   if (!file) return null;
   const buffer = await fs.readFile(file);
-  if (!buffer.length || buffer.length > MAX_BYTES) return null;
+  // 兜底要把整张图转成 base64，瞬时占用约为文件大小的 4/3；超过上限就不兜底，避免一条大图顶掉常驻内存。
+  if (!buffer.length || buffer.length > FALLBACK_BYTES) return null;
   const sendImage = ctx.sender?.sendForwardedImage;
   if (typeof sendImage !== 'function') return null;
   return sendImage.call(ctx.sender, ctx.chatKey, 'base64://' + buffer.toString('base64'),
@@ -396,8 +407,8 @@ export async function sendNativeSticker(ctx, { stickerId, replyToMessageId, atUs
   const picked = pickDifferentSticker(ctx, localEntry(ctx, stickerId));
   const entry = picked;
   if (typeof send !== 'function') throw new Error('未连接已收表情发送队列');
-  const stickerPolicy = ensureStickerDecision(ctx.session, { selfId: ctx.selfId, chatKey: ctx.chatKey, sticker: getConfig().sticker });
-  checkStickerDispatch(stickerPolicy, { selfId: ctx.selfId, chatKey: ctx.chatKey, sticker: getConfig().sticker, signal: ctx.signal });
+  // 收藏库里的表情随时可发：这里只发 explicit 许可，不参与档位/概率/配额判定。
+  const stickerPolicy = explicitStickerPolicy(ctx);
   let result;
   try {
     result = await send(entry.qqFile, { stickerPolicy, signal: ctx.signal, expected_self_id: ctx.selfId,

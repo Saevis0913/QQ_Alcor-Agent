@@ -17,7 +17,8 @@ import { normalizeStickerEntry } from './stickers.js';
  * 预览/排序/检索都不需要把原记录全读进内存。
  */
 
-const MEMORY_WINDOW = 512;
+// 常驻内存只保留最近 256 条（约 1KB/条）；更老的条目仍在索引与磁盘里，翻页/检索时按需读。
+const MEMORY_WINDOW = 256;
 const SORT_KEYS = Object.freeze({ created: 2, name: 3, size: 4, used: 5 });
 
 // 原图大小：老条目可能没写 bytes（收藏链路早先漏了这一个字段），直接看本地文件。

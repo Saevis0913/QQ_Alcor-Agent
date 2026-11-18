@@ -106,6 +106,9 @@ export function checkStickerDispatch(decision, { selfId, chatKey, sticker, histo
   checkScope(selfId, chatKey);
   if (!decision || decision.version !== 1) fail('STICKER_SESSION_REQUIRED', '缺少本轮表情发送许可');
   if (decision.selfId !== String(selfId) || decision.chatKey !== chatKey) fail('STICKER_SCOPE_CHANGED', '本轮 QQ 账号或会话已变化');
+  // 工具点名 / 用户点名的表情属于"明确请求"：不看档位、不看概率、不看最近十条配额，
+  // 也不受表情总开关影响——库里存着的图任何时候都能发出去。限频、去重与记账仍由发送层负责。
+  if (decision.explicit === true) return true;
   if (decision.attempted) fail('STICKER_ALREADY_ATTEMPTED', '本轮已经提交过一张表情，不能换工具或重试再发');
   const tier = stickerTier(sticker);
   if (!tier.enabled) fail('STICKER_DISABLED', '表情发送总开关已关闭');
