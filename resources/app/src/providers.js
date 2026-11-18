@@ -356,7 +356,9 @@ export function removeProvider(providerId) {
   };
   // 当前选中的提供商被删 → 一并清空选中态，回落到"未选择"
   if (String(cfg.api?.provider ?? '') === pid) {
-    patch.api = { provider: '', model: '' };
+    // __clearIdentity__：显式允许把 api.model/baseUrl 清空（config.updateConfig 默认丢弃
+    // 「空串覆盖已有值」的写法，防止设置页误清）。
+    patch.api = { provider: '', model: '', __clearIdentity__: true };
   }
   updateConfig(patch);
   return true;

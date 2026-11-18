@@ -614,6 +614,24 @@ function preserveSanitizedSecrets(current, patch) {
 /** 更新并持久化配置（浅合并到当前值；patch 里传对象字段则整体替换该字段）。 */
 export function updateConfig(patch) {
   const cleanPatch = stripDerivedFlags(structuredClone(patch ?? {}));
+  // ── 模型身份防误清（2026-11-18 事故）──
+  // 设置页把模型身份三件套放在隐藏字段里整份回传；隐藏字段一旦是空的
+  // （页面还没渲染完、或旧页面 beforeunload 兜底保存），一次普通保存就会把
+  // api.baseUrl / api.model 清成空串 —— 界面显示「未选择模型」，所有模型调用
+  // 回落成 BUILTIN_MODEL_FAILED。这里丢弃「用空串覆盖已有值」的字段；
+  // 要真正清空必须显式带 __clearIdentity__（删除提供商走这条）。
+  if (cleanPatch && cleanPatch.api && typeof cleanPatch.api === 'object') {
+    const storedApi = getConfig()?.api || {};
+    const clearIdentity = cleanPatch.api.__clearIdentity__ === true;
+    delete cleanPatch.api.__clearIdentity__;
+    if (!clearIdentity) {
+      for (const field of ['baseUrl', 'model']) {
+        const next = String(cleanPatch.api[field] ?? '').trim();
+        const current = String(storedApi[field] ?? '').trim();
+        if (next === '' && current !== '') delete cleanPatch.api[field];
+      }
+    }
+  }
   const cleanObsolete = stripObsoleteFields(cleanPatch);
   // ── 脱敏回传的密钥保留（2026-09-19 修"搜索 Key 离开页签就消失"）──
   // 前端拿到的配置是脱敏的（apiKey 被删、hasApiKey 被加）；它把整个配置/区块

@@ -1286,9 +1286,21 @@ async function saveConfig({ quiet = false } = {}) {
       // 这里把隐藏字段 / 只读框的当前值一并带上 —— 保证"选完模型又在
       // 本区块改了单价"的合并保存不会把 model/provider/baseUrl 丢掉。
       // （deepMerge 下不写就保留服务端旧值，写了就与隐藏字段一致，两个方向都安全。）
-      model: val('#cfg-model', c.api.model || '').trim(),
-      provider: val('#cfg-provider', c.api.provider || '').trim(),
-      baseUrl: val('#cfg-baseurl-value', c.api.baseUrl || '').trim(),
+      // 模型身份三件套：读隐藏字段，**空值一律不写**（deepMerge 不写就保留服务端现值）。
+      // 事故（2026-11-18）：这里曾把读到的空串原样发出 —— 旧页面 beforeunload 的
+      // 兜底保存只要撞上隐藏字段还没填好，一次普通保存就把 api.baseUrl / api.model
+      // 清成空串，界面显示「未选择模型」，全部模型调用回落 BUILTIN_MODEL_FAILED。
+      // 想真正清空模型身份，只能走模型管理/删除提供商那条显式路径。
+      ...(() => {
+        const out = {};
+        const identity = {
+          model: val('#cfg-model', '').trim(),
+          provider: val('#cfg-provider', '').trim(),
+          baseUrl: val('#cfg-baseurl-value', '').trim()
+        };
+        for (const [key, value] of Object.entries(identity)) if (value) out[key] = value;
+        return out;
+      })(),
       // 备选模型列表：从 DOM 实时读取（fallbackRows 是 bindSettingsEvents 的局部变量，
       // 顶层 saveConfig 访问不到，所以这里直接查 DOM），过滤掉空行。
       // 提供商列已删：model 输入框显示"提供商名 · 模型id"，但存的是纯 id +
