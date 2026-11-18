@@ -21,6 +21,22 @@ const MAX_BATCH_BYTES = 20 * 1024 * 1024;
 const reviewEnabled = () => isSkillEnabledInConfig('sticker-review');
 const usable = (entry) => !reviewEnabled() || entry.reviewVersion === 1;
 
+// 「刚发过的那张别再连着发」：只按会话记最后一次，重启即忘，不需要落盘。
+const lastStickerByChat = new Map();
+
+/**
+ * 主动配图时避免连着两轮同一张：库里还有别的就换一张，只有一张就照发。
+ * 只改「选哪张」，不动档位/授权/频控——那些仍然由 sendNativeSticker 原样把关。
+ */
+export function pickDifferentSticker(ctx, entry, last = lastStickerByChat.get(String(ctx.chatKey ?? ''))) {
+  if (last !== entry.id) return entry;
+  const scope = currentScope(ctx);
+  const pool = (ctx.stickers?.entries || []).filter((row) => row.id !== entry.id && row.id.startsWith(scope) &&
+    usable(row) && (OPAQUE_FILE.test(row.qqFile) || Boolean(row.localFile)));
+  if (!pool.length) return entry;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 function currentScope(ctx) {
   const account = String(ctx.selfId ?? '');
   const chat = String(ctx.chatKey ?? '');
@@ -355,25 +371,45 @@ function markStickerMissing(ctx, stickerId) {
   } catch { /* 标记失败不影响本次跳过 */ }
 }
 
+/**
+ * 兜底：QQ 侧的表情缓存会过期（重启 QQ、清理缓存之后 alcor-media 句柄就失效），
+ * 但收藏时的原图还在 data/sticker-images 里。这时把本地那份当图片发出去，
+ * 免得整张表情永远"调不出来"。发送管道仍走 sender（限频 / 去重 / 留档都在）。
+ */
+export async function sendSavedStickerFile(ctx, entry) {
+  const file = localStickerPath(entry.localFile || entry.url);
+  if (!file) return null;
+  const buffer = await fs.readFile(file);
+  if (!buffer.length || buffer.length > MAX_BYTES) return null;
+  const sendImage = ctx.sender?.sendForwardedImage;
+  if (typeof sendImage !== 'function') return null;
+  return sendImage.call(ctx.sender, ctx.chatKey, 'base64://' + buffer.toString('base64'),
+    { signal: ctx.signal, expected_self_id: ctx.selfId });
+}
+
 export async function sendNativeSticker(ctx, { stickerId, replyToMessageId, atUserId } = {}, { send } = {}) {
   if (String(replyToMessageId ?? '').trim() || String(atUserId ?? '').trim()) {
     const error = new Error('已收表情只能单独发送：不能带引用或 @');
     error.code = 'STICKER_STANDALONE_ONLY';
     throw error;
   }
-  const entry = localEntry(ctx, stickerId);
+  const picked = pickDifferentSticker(ctx, localEntry(ctx, stickerId));
+  const entry = picked;
   if (typeof send !== 'function') throw new Error('未连接已收表情发送队列');
   const stickerPolicy = ensureStickerDecision(ctx.session, { selfId: ctx.selfId, chatKey: ctx.chatKey, sticker: getConfig().sticker });
   checkStickerDispatch(stickerPolicy, { selfId: ctx.selfId, chatKey: ctx.chatKey, sticker: getConfig().sticker, signal: ctx.signal });
   let result;
   try {
     result = await send(entry.qqFile, { stickerPolicy, signal: ctx.signal, expected_self_id: ctx.selfId,
-      beforeDispatch: () => { localEntry(ctx, stickerId); } });
+      beforeDispatch: () => { localEntry(ctx, entry.id); } });
   } catch (error) {
     // 素材在 QQ 侧过期、或本地转存被清理：标记这一条并静默跳过，不把 400 抛回对话。
     if (!/^(NATIVE_STICKER_|STICKER_)/.test(String(error?.code ?? ''))) throw error;
+    const saved = await sendSavedStickerFile(ctx, entry).catch(() => null);
+    if (saved?.message_id) return { stickerId: entry.id, messageId: saved.message_id, fallback: 'local-file' };
     markStickerMissing(ctx, entry.id);
     return { stickerId: entry.id, messageId: null, skipped: true, reason: String(error.code) };
   }
+  if (result?.message_id) lastStickerByChat.set(String(ctx.chatKey ?? ''), entry.id);
   return { stickerId: entry.id, messageId: result?.message_id ?? null,...(result?.bookkeepingWarning?{bookkeepingWarning:result.bookkeepingWarning}:{}) };
 }

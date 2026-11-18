@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { normalizeStickerEntry } from './stickers.js';
 
 /**
@@ -18,6 +19,21 @@ import { normalizeStickerEntry } from './stickers.js';
 
 const MEMORY_WINDOW = 512;
 const SORT_KEYS = Object.freeze({ created: 2, name: 3, size: 4, used: 5 });
+
+// 原图大小：老条目可能没写 bytes（收藏链路早先漏了这一个字段），直接看本地文件。
+// 「0 B」既会让统计难看，也会被误判成素材缺失，必须在读的时候就能补回来。
+function fileBytesOf(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return 0;
+  let target = raw;
+  if (/^file:\/\//i.test(raw)) {
+    try { target = fileURLToPath(raw); } catch { return 0; }
+  }
+  try {
+    const stat = fs.statSync(target);
+    return stat.isFile() ? stat.size : 0;
+  } catch { return 0; }
+}
 
 let cached = null;
 
@@ -83,6 +99,24 @@ export function openStickerStore({ dir }) {
     if (Array.isArray(parsed)) rows = parsed.filter((row) => Array.isArray(row) && row.length >= 6);
   } catch { rows = []; }
 
+  // 打开时把「原图 0 B」的行按本地文件补回来：索引行与 doc 都要改，
+  // 否则列表（读索引）和详情抽屉（读 doc）会各说一套。
+  const rowBytesFix = () => {
+    let fixed = 0;
+    for (const row of rows) {
+      if (Number(row[4]) > 0) continue;
+      let doc;
+      try { doc = JSON.parse(fs.readFileSync(docPath(dir, row[0]), 'utf8')); } catch { continue; }
+      const size = fileBytesOf(doc?.localFile || doc?.url);
+      if (!size) continue;
+      row[4] = size;
+      doc.bytes = size;
+      try { fs.writeFileSync(docPath(dir, row[0]), JSON.stringify(doc), 'utf8'); } catch { /* 写不动下次再来 */ }
+      fixed += 1;
+    }
+    return fixed;
+  };
+
   // id → 行下标；只在增删时维护，查找 O(1)。
   const position = new Map(rows.map((row, index) => [row[0], index]));
   let dirty = false;
@@ -99,6 +133,11 @@ export function openStickerStore({ dir }) {
     flushTimer = setTimeout(() => { flushTimer = null; flush(); }, 400);
     flushTimer.unref?.();
   };
+  // 打开时顺手修一遍历史行的 bytes（只动真缺的，不动已有大小）
+  {
+    const fixed = rowBytesFix();
+    if (fixed) touch();
+  }
 
   function put(entry) {
     const normalized = normalizeStickerEntry(entry);
@@ -107,7 +146,9 @@ export function openStickerStore({ dir }) {
     const prevBytes = prevAt === undefined ? 0 : Number(rows[prevAt][4]) || 0;
     // normalizeStickerEntry 只认它认识的字段，bytes/scope 这类元数据要沿上一版补回来，
     // 否则改一次标签就把"原图大小"清零（曾把统计打成 0）。
-    if (!Number(normalized.bytes)) normalized.bytes = Number(entry.bytes) || prevBytes;
+    if (!Number(normalized.bytes)) {
+      normalized.bytes = Number(entry.bytes) || prevBytes || fileBytesOf(entry.localFile || entry.url);
+    }
     if (!normalized.scope) normalized.scope = String(entry.scope || (prevAt === undefined ? '' : rows[prevAt][1]) || '');
     const row = rowOf(normalized);
     const at = position.get(row[0]);

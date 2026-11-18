@@ -2574,6 +2574,9 @@ html[data-theme] input::selection {
 }
 
 /* ── 二十六、表情库（对话与记忆 → 表情）─────────────────────── */
+/* 表情是一座会变长的墙：让页面自己滚，滚轮/触控板/键盘都能翻。
+   之前 .view 是 overflow:hidden，网格长到视口外就再也翻不到，只能靠「加载更多」。 */
+html[data-theme] #view-stickers { overflow-y: auto; overscroll-behavior: contain; }
 html[data-theme] .sticker-page { padding: 18px 22px 40px; display: flex; flex-direction: column; gap: 14px; }
 
 html[data-theme] .stk-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

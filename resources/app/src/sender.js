@@ -317,6 +317,12 @@ export class SendQueue {
     return { sent, failed, deduped };
   }
 
+  /** 素材丢失时静默跳过：写告警日志并向上返回 skipped，不产生聊天里的错误气泡。 */
+  #stickerLost(chatKey, sticker, code) {
+    this.#writeLog(`[sender] 表情素材不可用，已跳过：${code}（${sticker?.id ?? '未知 id'}）`, console.warn).catch(() => {});
+    return { message_id: null, skipped: true, reason: code };
+  }
+
   /** 发送一个收藏表情（独立气泡）；与原生/梗鲸共用本轮唯一许可。 */
   sendSticker(chatKey, sticker, options = {}) {
     const [kind, id] = String(chatKey).split(':');
@@ -326,10 +332,18 @@ export class SendQueue {
       await sleep(randInt(600, 1500), { signal: options.signal });
       this.#checkReplyPolicy(chatKey);
       const primary = String(sticker.url || '').trim();
-      if (!primary) throw new Error('表情没有可发送的图片地址');
-      const data = await this.#stickerAttempt(chatKey, selfId, '__sticker__' + (sticker.id || primary), options,
-        () => this.onebot.sendSticker(kind, id, primary, { expected_self_id: selfId, signal: options.signal,
-          replyToMessageId: options.replyToMessageId ?? null, atUserId: options.atUserId ?? null }));
+      // 表情素材丢失（本地转存被删、QQ 侧文件过期）时不再把错误抛进聊天：
+      // 记一条告警、跳过这一条，让这一轮继续正常说话。
+      if (!primary) return this.#stickerLost(chatKey, sticker, 'STICKER_MEDIA_LOST');
+      let data;
+      try {
+        data = await this.#stickerAttempt(chatKey, selfId, '__sticker__' + (sticker.id || primary), options,
+          () => this.onebot.sendSticker(kind, id, primary, { expected_self_id: selfId, signal: options.signal,
+            replyToMessageId: options.replyToMessageId ?? null, atUserId: options.atUserId ?? null }));
+      } catch (error) {
+        if (!/^(NATIVE_STICKER_|STICKER_)/.test(String(error?.code ?? ''))) throw error;
+        return this.#stickerLost(chatKey, sticker, String(error.code));
+      }
       const messageId = data.message_id;
       const receipt = await this.#recordConfirmed(chatKey, {
         selfId, text: '[表情包:' + (sticker.desc || sticker.localNote || sticker.id) + ']', ts: Date.now(), messageId,
@@ -351,9 +365,15 @@ export class SendQueue {
       await sleep(randInt(600, 1500), { signal: options.signal });
       this.#checkReplyPolicy(chatKey);
       if (this.#isDuplicate(chatKey, fingerprint)) throw new Error('这个表情刚刚发过，已跳过');
-      const data = await this.#stickerAttempt(chatKey, selfId, fingerprint, options, () => this.onebot.sendSegments(
-        kind, id, [{ type: 'image', data: { file } }], { ...options, expected_self_id: selfId || undefined }
-      ));
+      let data;
+      try {
+        data = await this.#stickerAttempt(chatKey, selfId, fingerprint, options, () => this.onebot.sendSegments(
+          kind, id, [{ type: 'image', data: { file } }], { ...options, expected_self_id: selfId || undefined }
+        ));
+      } catch (error) {
+        if (!/^(NATIVE_STICKER_|STICKER_)/.test(String(error?.code ?? ''))) throw error;
+        return this.#stickerLost(chatKey, { id: file }, String(error.code));
+      }
       this.#markSent(chatKey, fingerprint);
       const messageId = data?.message_id ?? null;
       const receipt = await this.#recordConfirmed(chatKey, {
@@ -370,11 +390,18 @@ export class SendQueue {
    */
   sendForwardedImage(chatKey, file, options = {}) {
     const [kind, id] = String(chatKey).split(':');
-    if (!/^(group|private):[1-9]\d{0,9}$/.test(String(chatKey)) || !/^alcor-media-[a-f0-9]{64}$/.test(file)) {
+    const ref = String(file ?? '');
+    // 两种来源：宿主的 alcor-media 句柄，或本地文件转成的 base64（QQ 侧缓存过期时的兜底）。
+    if (!/^(group|private):[1-9]\d{0,9}$/.test(String(chatKey)) ||
+        !(/^alcor-media-[a-f0-9]{64}$/.test(ref) || ref.startsWith('base64://'))) {
       return Promise.reject(new Error('已收图片或目标会话无效'));
     }
+    if (ref.startsWith('base64://') && ref.length > 16 * 1024 * 1024) {
+      return Promise.reject(new Error('图片过大（超过 12 MB）'));
+    }
     const selfId = String(options.expected_self_id ?? this.onebot.selfId ?? '');
-    const fingerprint = `__forwarded__${file}`;
+    // 指纹必须是定长：base64 里有整张图，直接当 key 会把内存拖爆。
+    const fingerprint = '__forwarded__' + createHash('sha256').update(ref).digest('hex');
     return this.#chain(chatKey)(async () => {
       this.#checkRate(chatKey);
       await sleep(randInt(600, 1500), { signal: options.signal });
@@ -384,7 +411,7 @@ export class SendQueue {
         if (selfId !== String(this.onebot.selfId ?? '')) {
           throw Object.assign(new Error('AGENT_ACCOUNT_CHANGED: 发送时 QQ 账号已变化。'), { nonretryable: true });
         }
-        return this.onebot.sendSegments(kind, id, [{ type: 'image', data: { file } }], { ...options, expected_self_id: selfId || undefined });
+        return this.onebot.sendSegments(kind, id, [{ type: 'image', data: { file: ref } }], { ...options, expected_self_id: selfId || undefined });
       });
       this.#markSent(chatKey, fingerprint);
       const messageId = data?.message_id ?? null;
