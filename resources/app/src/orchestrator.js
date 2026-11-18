@@ -591,6 +591,14 @@ export class Orchestrator {
       ? { tier: 3, count: Math.max(0, Number(storeConfigForChat(chatKey).historyCount) || 80), reason: `活跃期（话题：${activeState.topic}）`, shouldRespond: true }
       : tierResult;
 
+    // 2026-11-18：硬性召唤标记。@ 我 / 拍一拍 / 私聊 这三种情况不允许"静默收场"：
+    // 提示词会给一条【本轮必须回复】，跑完一个字没发时再补跑一次（见下方 forcedReply）。
+    const summoned = (triggerEntries || []).some((m) => m?.atMe === true || m?.isPoke === true);
+    // 四档（全部响应）也算"必须开口"：用户把滑条拉到四档就是在说"这个会话别筛我"，
+    // 模型再自己判断"插不上话"就沉默，用户看到的就是"四档也回不了"。
+    const tierFour = Number(tierResult?.tier) >= 4 && tierResult?.shouldRespond !== false;
+    const mustReply = !proactive && (String(chatKey).startsWith('private:') || summoned || tierFour);
+
     this.runningChats.add(chatKey);
     const seq = (this.runSeq.get(chatKey) || 0) + 1;
     this.runSeq.set(chatKey, seq);
@@ -649,7 +657,7 @@ export class Orchestrator {
     try {
       for (let attempt = 1; attempt <= MAX_SESSION_ATTEMPTS; attempt++) {
         try {
-          await this.#runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit: effectiveTier.count, tierInfo: effectiveTier, activeTopic: activeState ? activeState.topic : null });
+          await this.#runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit: effectiveTier.count, tierInfo: effectiveTier, activeTopic: activeState ? activeState.topic : null, mustReply });
           lastError = null;
           break;
         } catch (error) {
@@ -693,6 +701,23 @@ export class Orchestrator {
           this.sessions.finish(session.id, 'error');
           this.emit('session-end', { sessionId: session.id, chatKey, status: 'error', error: session.error,errorCode:session.errorCode,deliveryUnknown:session.deliveryUnknown,sideEffects:session.sideEffects });
           console.error(`[orchestrator] 运行 ${session.id} 出错:`, lastError);
+        }
+      }
+
+      // ── 静默补发（2026-11-18）──
+      // 被 @ / 拍一拍 / 私聊 是明确召唤，但模型仍可能选择不开口（读完上下文
+      // 判断"在聊别的"）。这一轮只要一个字都没发、没报错、没被中止，就带着
+      // forceReply 再跑一次；每个会话只补一次，避免死循环式骚扰。
+      if (!lastError && mustReply && !session.forcedReply && !this.aborted
+          && (session.sent || []).length === 0) {
+        session.forcedReply = true;
+        session.activity = '被点名但没有开口，补一次…';
+        this.sessions.update(session.id);
+        this.emit('session-update', session.id);
+        try {
+          await this.#runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit: effectiveTier.count, tierInfo: effectiveTier, activeTopic: activeState ? activeState.topic : null, mustReply, forceReply: true });
+        } catch (error) {
+          console.warn('[orchestrator] 补发失败:', error?.message ?? error);
         }
       }
     } finally {
@@ -800,7 +825,7 @@ export class Orchestrator {
     });
   }
 
-  async #runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit = null, tierInfo = null, activeTopic = null }) {
+  async #runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit = null, tierInfo = null, activeTopic = null, mustReply = false, forceReply = false }) {
     const cfg = getConfig();
     session.selfId ??= String(this.onebot.selfId||'');
     if(session.selfId&&session.selfId!==String(this.onebot.selfId||''))throw Object.assign(new Error('AGENT_ACCOUNT_CHANGED'),{nonretryable:true});
@@ -958,6 +983,9 @@ export class Orchestrator {
       skillContext,
       // 活跃模式：注入当前话题锚点（buildUserPrompt 据此渲染【活跃模式】段）
       activeTopic,
+      // 硬性召唤：@ 我 / 拍一拍 / 私聊 时必须开口（forceReply = 上一轮沉默后的补发）
+      mustReply,
+      forceReply,
       // 提示词锚点：传入上一轮的前缀状态；新状态经 session.promptAnchorState 带回
       promptAnchor: { prev: this.promptAnchors.get(chatKey) || null },
       session

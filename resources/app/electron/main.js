@@ -134,6 +134,8 @@ bootDiag('单实例锁已检查 gotLock=' + gotLock);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ICON_PATH = path.resolve(__dirname, '..', 'assets', 'icon.png');
+// 排障用：安装目录下放一个 skip-splash 文件即可完全跳过开屏动画
+const SKIP_SPLASH_FILE = path.join(agentInstallRoot, 'skip-splash');
 
 let mainWindow = null;
 
@@ -152,6 +154,62 @@ ipcMain.on('app-refocus', () => {
 let core = null;
 let tray = null;
 let quitting = false;
+let splashWindow = null;
+
+// 开屏动画（2026-11-18）：独立无边框窗口放 assets/splash.mp4，默认静音、可调倍速，
+// 任意键 / 鼠标点击 / 视频播完都会关掉它并露出主窗口。视频缺失或解码失败时
+// 直接跳过 —— 开屏不该成为进不去程序的理由。
+function closeSplash() {
+  const win = splashWindow;
+  splashWindow = null;
+  if (!win) return;
+  try {
+    if (!win.isDestroyed()) { win.removeAllListeners('closed'); win.destroy(); }
+  } catch { /* 关闭失败不影响主窗口 */ }
+}
+
+async function createSplash() {
+  if (hiddenVerification) return;
+  if (fs.existsSync(SKIP_SPLASH_FILE)) return;      // 排障开关：放一个文件即可跳过开屏
+  const video = path.resolve(__dirname, '..', 'assets', 'splash.mp4');
+  if (!fs.existsSync(video)) { console.warn('[splash] 未找到 assets/splash.mp4，跳过开屏'); return; }
+  try {
+    splashWindow = new BrowserWindow({
+      width: 1120,
+      height: 630,
+      frame: false,
+      resizable: false,
+      movable: false,
+      show: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      backgroundColor: '#07080a',
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false,
+        preload: path.join(__dirname, 'splash-preload.cjs')
+      }
+    });
+    splashWindow.setMenuBarVisibility(false);
+    splashWindow.setAlwaysOnTop(true, 'screen-saver');
+    splashWindow.once('ready-to-show', () => splashWindow?.show());
+    // 开屏出问题时（视频编码不支持、路径缺失）要能在日志里看到原因。
+    splashWindow.webContents.on('console-message', (_e, level, message) => {
+      if (level >= 2) console.warn('[splash]', message);
+    });
+    splashWindow.webContents.on('did-fail-load', (_e, code, desc) => console.warn('[splash] 页面加载失败:', code, desc));
+    splashWindow.on('closed', () => { splashWindow = null; });
+    await splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+    // 视频播完 / 用户跳过都会走这里；再挂一个超时兜底，避免窗口卡在开屏。
+    setTimeout(closeSplash, 42_000);
+  } catch (error) {
+    console.warn('[splash] 开屏动画启动失败，直接进入主界面:', error?.message ?? error);
+    closeSplash();
+  }
+}
+
+ipcMain.on('splash-done', () => closeSplash());
 
 function applyAutoStart() {
   if (!core) return;
@@ -325,6 +383,8 @@ app.whenReady().then(async () => {
     const port = await core.start();
     core.lastPort = port;
     bootDiag('核心已启动 port=' + port);
+    // 开屏动画不阻塞主流程：核心端口已定，先放视频，主窗口在下面并行创建。
+    createSplash().catch((error) => console.warn('[splash] 启动异常:', error?.message ?? error));
     await createWindow(port);
     if (!hiddenVerification) applyAutoStart();
     if (!hiddenVerification) createTray();

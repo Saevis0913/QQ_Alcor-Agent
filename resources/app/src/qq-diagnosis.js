@@ -61,8 +61,8 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
         detail: '账号在线，消息收发通道正常。', hint: '' };
     }
     return { ...base, code: 'RECEIVE_NOT_READY', title: `QQ 宿主已连上 ${account}`.trim(),
-      detail: '宿主已连接，但账号在线或消息通道还没确认。',
-      hint: '在 QQ 里确认已登录，然后点「重新扫描」；一直不恢复就重启 QQ 再连。' };
+      detail: '宿主已连上控制台，正在确认账号在线与消息通道（通常半分钟内完成）。',
+      hint: '先在 QQ 里确认已登录、等 30 秒再点「重新扫描」；一直不恢复就重启 QQ 再连。' };
   }
   if (!rows.length) {
     return { ...base, code: 'NO_QQ_RUNNING', title: '没有检测到正在运行的 QQ',
@@ -84,9 +84,9 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
       candidate: null, unreadable: unreadable.length };
   }
   if (hostLoaded) {
-    return { ...base, code: 'HOST_PRESENT', title: 'Alcor 宿主已经驻留在 QQ 里',
-      detail: '上一次连接留下的宿主还没卸载，重复注入会被拒绝；它只会在 QQ 退出时一起消失。',
-      hint: '完全退出 QQ（任务栏也退），重新登录后点「重新扫描」；必要时用「重启 QQ」按钮。' };
+    return { ...base, code: 'HOST_PRESENT', title: 'Alcor 宿主还在 QQ 里，正在等它接回来',
+      detail: '上一次连接留下的宿主还在 QQ 进程内（它只随 QQ 退出而消失）。它通常会在半分钟内自己连回控制台，这段时间不用动它。',
+      hint: '先等 30 秒再点「重新扫描」；一直不恢复（或想立刻重连）再完全退出 QQ 重新登录，或用「重启 QQ」按钮。' };
   }
   if (foreignRow) {
     return { ...base, code: 'FOREIGN_MODULES', title: `QQ 里驻留着其它框架的模块：${foreignRow.foreignModules.join('、')}`,

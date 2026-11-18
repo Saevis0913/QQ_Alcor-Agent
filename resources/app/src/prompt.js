@@ -310,9 +310,22 @@ export function resolveContextTier({ triggerEntries = [], selfNickname = '', bot
   // 回复策略（all / mentions / probability / off）。
   // 2026-11-17 改版：私聊不再被"仅@／概率"这两种群聊闸门吃掉 —— 1v1 会话里每条
   // 消息都是直接发给机器人的，漏一条就是漏一次互动。私聊只认显式"不回复(off)"。
+  // 2026-11-18：被点名优先于策略。之前「仅 @ 回复」把 atMe 被解析成 false 的 @
+  // 消息筛掉，「概率回复」也可能连续几次都掷不中 —— 用户侧看到的就是
+  // "四档也不回、@ 也不回"。现在只要这批里有一条明确指向机器人，除 off 外一律响应。
   if (c.replyPolicy) {
     const { mode, probability } = c.replyPolicy;
-    const mentioned = triggerEntries.some(e => e?.atMe === true || (typeof e?.atMe !== 'boolean' && isAtMe(String(e?.text ?? ''), { selfNickname, botName, selfId })));
+    const mentioned = triggerEntries.some(e => e?.atMe === true || (e?.atMe !== true && isAtMe(String(e?.text ?? ''), { selfNickname, botName, selfId })));
+    if (mentioned && mode !== 'off') {
+      return { tier: isPrivate ? 4 : 2, count: historyCount(), reason: '被点名（策略不拦）', shouldRespond: true };
+    }
+    // 档位 4 = "全部响应"：这是用户明确表达"这个会话别筛"，优先级高于
+    // 仅@/概率 这类群聊策略（因此不会再出现"四档也按 3% 概率掷骰子"）。
+    // 只有显式 off 能压过它。
+    const tierCfg = Number(c.contextTier);
+    if (mode !== 'off' && Number.isFinite(tierCfg) && tierCfg >= 4) {
+      return { tier: 4, count: historyCount(), reason: '全部响应（四档优先于策略）', shouldRespond: true };
+    }
     const chance = roll == null ? Math.random() * 100 : Number(roll);
     const respond = mode === 'off' ? false
       : isPrivate ? true
@@ -678,6 +691,18 @@ export function buildUserPrompt(ctx) {
     '【引导说明】',
     '- 回复前以【未读信息】为当前话题，结合相关的【已读信息】和【新已读信息】。消息前的 #数字是可供工具使用的消息 ID。'
   ].join('\n'));
+
+  // 硬性召唤（2026-11-18）：@ 我 / 拍一拍 / 私聊 —— 这一轮必须是"开口"的一轮。
+  // 只写在系统提示里不够：模型读完上下文判断"他们在聊别的"就会沉默，
+  // 用户看到的是"@ 了也不回"。所以把这条放进取数输入，且区分首次与补发。
+  if (ctx.mustReply) {
+    parts.push([
+      '【本轮必须回复】',
+      '- 本轮被判定为"该你说话"（@ 你 / 拍了拍你 / 私聊 / 当前是四档全部响应），必须用发送工具发出一条消息。',
+      '- 不要因为"他们在聊别的""插不上话"就沉默；至少回一句符合人设的话。',
+      ctx.forceReply ? '- 上一轮你一个字都没发，这一轮务必开口，不要再沉默。' : ''
+    ].filter(Boolean).join('\n'));
+  }
 
   // 记忆：只注入与本次对话相关群友的印象（控制 token）。
   // 成员口径随锚点模式变化：
