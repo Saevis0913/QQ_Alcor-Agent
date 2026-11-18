@@ -70,7 +70,10 @@
       detail = `更新失败：${codeText(status.error)}`;
       action = '<button class="btn btn-small" id="update-action">重试下载</button>';
     } else {
-      detail = status.notes ? String(status.notes).split('\n')[0].slice(0, 80) : '可以一键下载并自动升级，数据与设置都会保留';
+      // 发布说明第一行通常是 Markdown 标题，挑第一行真正的正文，否则横幅里会顶着「## …」。
+      const noteLine = String(status.notes || '').split('\n').map(line => line.trim())
+        .find(line => line && !line.startsWith('#') && !line.startsWith('|')) || '';
+      detail = noteLine ? noteLine.slice(0, 80) : '可以一键下载并自动升级，数据与设置都会保留';
       action = '<button class="btn btn-primary btn-small" id="update-action">下载并更新</button>';
     }
     el.hidden = false;

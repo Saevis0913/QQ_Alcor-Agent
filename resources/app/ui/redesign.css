@@ -2756,12 +2756,22 @@ html[data-theme] .session-tools-digest {
 
 /* ── 二十八、自动更新横幅 ─────────────────────────────────────── */
 html[data-theme] .update-banner {
+  /* 注意：这个横幅插在 #topbar 之后，而 body 是「侧栏列 + 内容列」的网格；
+     不写定位的话它会掉进第一列（侧栏）被挤成一条竖排文字。这里做成右下角浮层。 */
+  position: fixed;
+  right: 18px;
+  bottom: 44px;
+  left: auto;
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 26px;
-  border-bottom: 1px solid var(--bd);
+  max-width: min(560px, calc(100vw - 40px));
+  padding: 10px 14px;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
   background: linear-gradient(90deg, var(--ac-soft), transparent 72%), var(--bg1);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .28);
 }
 
 html[data-theme] .update-banner[hidden] { display: none; }
@@ -2779,6 +2789,7 @@ html[data-theme] .update-banner .ub-text {
   align-items: baseline;
   gap: 10px;
   min-width: 0;
+  white-space: nowrap;
   font-size: 12.5px;
   color: var(--tx);
 }
