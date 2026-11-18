@@ -42,7 +42,8 @@ import { createStickerRoutes } from './sticker-routes.js';
 import { fetchMessageImage } from './onebot.js';
 import { detectDialect as detectThinkingDialect } from './thinking.js';
 import { createQzoneRoutes } from './qzone-routes.js';
-import { checkReleaseUpdate, releaseProjectUrl } from './release-update.js';
+import { releaseProjectUrl } from './release-update.js';
+import { checkForUpdate } from './update-manager.js';
 import { updateState, downloadUpdate, installUpdate } from './update-manager.js';
 import { createDesktopActions } from './desktop-actions.js';
 import { createChatActionRoutes } from './chat-actions.js';
@@ -1191,7 +1192,9 @@ export function createRoutes(deps) {
     {
       method: 'GET', pattern: '/api/update-check',
       handler: async ({ res, json }) => {
-        return json(res, 200, await checkReleaseUpdate(localVersion(), { standard: deps.standard === true }));
+        // 必须走 checkForUpdate：它会把结果写回 update-manager 的 state，
+        // 否则设置页轮询的 /api/update-status 还停留在启动时那次失败上。
+        return json(res, 200, await checkForUpdate({ current: localVersion(), standard: deps.standard === true }));
       }
     },
 

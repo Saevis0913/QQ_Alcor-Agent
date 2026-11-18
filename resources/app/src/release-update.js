@@ -56,7 +56,9 @@ function githubManifest(release, project, standard) {
   const latest = tag.replace(/^v/, '');
   const edition = standard ? 'Alcor-Agent-OneBot' : 'Alcor-Agent';
   const filename = `${edition}-Setup-${latest}-x64.exe`;
-  const asset = release.assets.find(item => item?.name === filename && item.state === 'uploaded');
+  const asset = release.assets.find(item => item?.name === filename);
+  // 资产已登记但还没传完（GitHub 显示 starter）：这不是配置错误，稍后重试即可。
+  if (asset && asset.state !== 'uploaded') throw Error('UPDATE_RELEASE_PENDING');
   const url = httpsUrl(asset?.browser_download_url);
   const expected = project.url + '/releases/download/' + encodeURIComponent(tag) + '/' + encodeURIComponent(filename);
   if (url !== expected) throw Error('UPDATE_MANIFEST_INVALID');

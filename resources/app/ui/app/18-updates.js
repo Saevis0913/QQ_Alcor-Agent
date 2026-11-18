@@ -19,7 +19,8 @@
     UPDATE_HOST_NOT_ALLOWED: '更新地址不在允许范围，已停止',
     UPDATE_PAYLOAD_MISSING: '安装包不在本地，请重新下载',
     UPDATE_NOTHING_TO_DOWNLOAD: '当前没有可下载的新版本',
-    UPDATE_MANIFEST_INVALID: '更新信息格式无效'
+    UPDATE_MANIFEST_INVALID: '更新信息格式无效',
+    UPDATE_RELEASE_PENDING: '更新源正在发布中，请稍后再试'
   };
   const codeText = (code) => CODE_TEXT[code] || code || '未知原因';
 
