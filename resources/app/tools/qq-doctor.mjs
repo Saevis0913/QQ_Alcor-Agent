@@ -36,11 +36,13 @@ if (connection) {
     report.coreVersion = health?.version || '';
     const processes = await getJson(`${connection.url}/manage/processes`, connection.token);
     report.processes = Array.isArray(processes?.processes) ? processes.processes : [];
-    report.connection = processes?.connection || health?.backend || null;
+    report.connection = health?.backend || processes?.connection || null;
     if (report.running) {
       try {
         const status = await getJson(`${connection.url}/get_status`, connection.token);
-        report.backendReady = status?.ok === true && status?.data?.online === true && report.connection?.receiveReady === true;
+        // 就绪以核心自述为准：/manage/processes 的 connection.receiveReady 在 native 后端恒为 false。
+        // get_status 回的是 {status:'ok',retcode:0,data:{online}},没有 ok 字段。
+        report.backendReady = status?.data?.online === true && health?.backend?.ws === 'open' && health?.backend?.receiveReady === true;
       } catch { /* 核心活着但后端答不上来，照样能给出进程级结论 */ }
     }
     report.frameworkDirs = scanFrameworkDirs(qqInstallRoots(report.processes));
