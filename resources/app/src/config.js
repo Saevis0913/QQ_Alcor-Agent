@@ -30,6 +30,10 @@ export const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 
 export const DEFAULT_CONFIG = {
   privatePolicy: DEFAULT_PRIVATE_POLICY,
+  // 行为细节（一般不用动）：
+  //   mentionWarmMinutes —— 被 @ / 拍一拍之后的"活跃期"分钟数。
+  //   活跃期不改变用户的档位设置，只是在这段时间里多听几条、给一次插话机会。
+  behavior: { mentionWarmMinutes: 8 },
   qzone: QZONE_DEFAULTS,
   // OpenAI 兼容 API（必填才能跑）
   api: {

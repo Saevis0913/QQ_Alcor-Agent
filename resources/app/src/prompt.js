@@ -274,7 +274,7 @@ export function stripMentions(entry) {
  *          tier 是"命中的档位"（触发原因所属档），不是"当前设置档位"；
  *          count 统一为 historyCount（响应时带的已读条数）
  */
-export function resolveContextTier({ triggerEntries = [], selfNickname = '', botName = '', selfId = '', cfg = null, roll = null, isPrivate = false } = {}) {
+export function resolveContextTier({ triggerEntries = [], selfNickname = '', botName = '', selfId = '', cfg = null, roll = null, isPrivate = false, warm = false, stickerOnly = false, addressedToOther = false } = {}) {
   const c = cfg || getConfig().store || {};
   // 各档统一的读取条数：historyCount（新字段）；老配置没有时沿用 allCount 的值
   // （四个分档字段已废弃，allCount 与 historyCount 语义等价，取它做迁移兜底最平滑）。
@@ -283,6 +283,29 @@ export function resolveContextTier({ triggerEntries = [], selfNickname = '', bot
     if (Number.isFinite(n) && n > 0) return n;
     return Math.max(0, Number(c.allCount) || 0);
   };
+
+  const atMeEarly = (triggerEntries || []).some((e) =>
+    e && typeof e.atMe === 'boolean'
+      ? e.atMe === true
+      : isAtMe(String(e?.text ?? ''), { selfNickname, botName, selfId }));
+
+  // 2026-11-18：两条"先读上下文再决定"的闸门，排在回复策略之前 ——
+  // 它们描述的是"这条消息到底是不是在跟我说话"，与档位/概率无关。
+  //   · 在跟别人说话（@ 了别人、没 @ 我）→ 不接，免得抢话。
+  //   · 群聊里一张单独的表情（没有文字）→ 当作冒泡，不解读、不硬接；
+  //     只有在刚被 @ 的活跃期里才给一次机会（仍可自行保持沉默）。
+  // 私聊不套这两条：1v1 里表情是提醒/招呼，必须接（见下面的私聊分支）。
+  if (!isPrivate) {
+    if (addressedToOther && !atMeEarly) {
+      return { tier: 0, count: 0, reason: '这条在跟别人说话', shouldRespond: false };
+    }
+    if (stickerOnly && !atMeEarly) {
+      if (warm) {
+        return { tier: 3, count: historyCount(), reason: '活跃期里的表情冒泡', shouldRespond: true };
+      }
+      return { tier: 0, count: 0, reason: '群聊表情冒泡，不接', shouldRespond: false };
+    }
+  }
 
   // 回复策略（all / mentions / probability / off）。
   // 2026-11-17 改版：私聊不再被"仅@／概率"这两种群聊闸门吃掉 —— 1v1 会话里每条
@@ -303,7 +326,9 @@ export function resolveContextTier({ triggerEntries = [], selfNickname = '', bot
   // 私聊恒响应：1v1 场景下消息本来就是发给机器人的，
   // 没有 @ 机制，不该套用群聊的"被艾特/关键词/随机"档位。
   if (isPrivate) {
-    return { tier: 4, count: historyCount(), reason: '私聊消息', shouldRespond: true };
+    // 私聊里的表情/图片单独到达：当成"提醒我回他"或"想聊两句"的信号，照常唤醒；
+    // 具体怎么回由提示词里的 Read First 规则决定（先补他上一句没被回的话）。
+    return { tier: 4, count: historyCount(), reason: stickerOnly ? '私聊表情（提醒/招呼）' : '私聊消息', shouldRespond: true };
   }
 
   // 注意：不能用 `Number(x) || 4` —— 0 是 falsy，会被误当成"未设置"回落到 4。

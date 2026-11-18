@@ -53,7 +53,11 @@ export class Orchestrator {
     // 免得存档页长期挂着一片假"未读"。有会话触发/有新消息时一律取消。
     this.unreadFallbackTimers = new Map(); // chatKey -> timer
     this.pendingWake = new Set();      // 防抖中等待聚批的 chatKey
-    this.pendingSessions = new Map();  // chatKey -> waiting sessionId（防抖期可见的“等待中”会话）
+    this.pendingSessions = new Map();
+    // 被 @ 之后的"活跃期"：chatKey -> 到期时间戳。
+    // 与话题活跃期（#activeState）分开：那条是"话题还在聊"，这条是"刚被叫过，
+    // 接下来 5–10 分钟多听几条、给一次插话机会"，不改变用户的档位设置。
+    this.warmUntil = new Map();  // chatKey -> waiting sessionId（防抖期可见的“等待中”会话）
     this.consolidating = new Set();    // 正在整理记忆的 chatKey
     this.runningChats = new Set();     // 正在运行的 chatKey
     this.activeRuns = new Map();       // chatKey -> sessionId
@@ -187,6 +191,11 @@ export class Orchestrator {
     //   模型未设置 → 消息保留未读，设置后（下一条消息或恢复积压）自动补处理
     if (!String(cfg.api.model || '').trim()) return { status: 'no_model', reason: '尚未配置模型，请在设置中选择模型。' };
     const triggerEntry = entry || this.store.peekUnread(chatKey, 1)?.[0];
+    // 被 @ / 拍了拍 / 引用我 之后，这个会话进入 8 分钟活跃期（不改变档位，
+    // 只是把"多听几条、给一次插话机会"记下来）。
+    if (triggerEntry && (triggerEntry.atMe === true || triggerEntry.isPoke === true)) {
+      this.#markWarm(chatKey);
+    }
     // 活跃期内的群：必响应，视作触发（与旧版"跳过判定"语义一致）
     const active = this.#activeState(chatKey);
     if (!active) {
@@ -197,6 +206,9 @@ export class Orchestrator {
         selfId: cfg.onebot?.selfId || this.onebot.selfId || '',
         cfg: storeConfigForChat(chatKey),
         isPrivate: String(chatKey).startsWith('private:'),
+        warm: this.#isWarm(chatKey),
+        stickerOnly: this.#stickerOnly(triggerEntry),
+        addressedToOther: this.#addressedToOther(triggerEntry),
         // 单条判定当场掷骰、当场出结果 —— 没有"预判/实跑"两阶段了，
         // 骰子结果由 resolveContextTier 的 reason 带回（含当时的值）。
         roll: null
@@ -292,6 +304,37 @@ export class Orchestrator {
    * 活跃模式：取某个会话的活跃期状态；到期/开关关闭时清理并返回 null。
    * 返回 { topic, until } 或 null。
    */
+  /** 这个会话是否处在"刚被 @ 过"的活跃期。 */
+  #isWarm(chatKey) {
+    const until = Number(this.warmUntil.get(chatKey) || 0);
+    if (until > Date.now()) return true;
+    if (until) this.warmUntil.delete(chatKey);
+    return false;
+  }
+
+  /** 记录一次"被叫到"：默认 8 分钟（5–10 分钟的中值），可用 behavior.mentionWarmMinutes 覆盖。 */
+  #markWarm(chatKey) {
+    const minutes = Number(getConfig().behavior?.mentionWarmMinutes);
+    const span = (Number.isFinite(minutes) && minutes > 0 ? Math.min(30, minutes) : 8) * 60_000;
+    this.warmUntil.set(chatKey, Date.now() + span);
+  }
+
+  /** 一条消息是否只有媒体、没有文字（群聊里多半是表情冒泡）。 */
+  #stickerOnly(entry) {
+    if (!entry) return false;
+    const media = Array.isArray(entry.media) ? entry.media : [];
+    if (!media.length) return false;
+    const text = String(entry.text ?? '').trim();
+    if (!text) return true;
+    return /^(?:\[(?:图片|动画表情|表情|视频|语音)\])+$/u.test(text);
+  }
+
+  /** 这条消息是否 @ 了别人（而不是我）。 */
+  #addressedToOther(entry) {
+    if (!entry || entry.atMe !== false) return false;
+    return Array.isArray(entry.atNames) && entry.atNames.length > 0;
+  }
+
   #activeState(chatKey) {
     if (storeConfigForChat(chatKey).replyPolicy) return null;
     const cfg = getConfig();
@@ -461,6 +504,9 @@ export class Orchestrator {
             selfId: cfgForJudge.onebot?.selfId || this.onebot.selfId || '',
             cfg: storeConfigForChat(chatKey),
             isPrivate: String(chatKey).startsWith('private:'),
+            warm: this.#isWarm(chatKey),
+            stickerOnly: this.#stickerOnly(m),
+            addressedToOther: this.#addressedToOther(m),
             roll: null
           });
           if (r.shouldRespond) { batchFloorTs = m.ts; hasTrigger = true; break; }   // 最早的触发消息定边界
@@ -533,6 +579,9 @@ export class Orchestrator {
         selfId: cfgNow.onebot?.selfId || this.onebot.selfId || '',
         cfg: storeConfigForChat(chatKey),
         isPrivate: String(chatKey).startsWith('private:'),   // 私聊恒响应
+        warm: this.#isWarm(chatKey),
+        stickerOnly: this.#stickerOnly(triggerEntries.find(Boolean)),
+        addressedToOther: this.#addressedToOther(triggerEntries.find(Boolean)),
         roll: null
       });
     // 活跃期覆盖：必响应，读取条数与其余档位一致（统一 historyCount），
