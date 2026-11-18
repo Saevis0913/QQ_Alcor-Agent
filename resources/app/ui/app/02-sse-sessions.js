@@ -613,6 +613,22 @@ function sessionReasoning(item) {
   return [...details, ...parts].filter(value => typeof value === 'string' && value.trim()).join('\n');
 }
 
+/** 把模型的思考原文压成一句要点：取开头 1–2 句（中文按句号，英文按 .!?），保留原空格。 */
+function sessionReasonGist(text) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!flat) return '';
+  const head = flat.slice(0, 220);
+  const marks = [];
+  const re = /[。！？!?]/g;
+  let match;
+  while ((match = re.exec(head)) && marks.length < 3) marks.push(match.index + 1);
+  let cut = marks.length ? marks[0] : head.length;
+  if (marks.length > 1 && marks[1] <= 120) cut = marks[1];
+  let gist = head.slice(0, cut).trim();
+  if (gist.length > 120) gist = `${gist.slice(0, 118).trim()}…`;
+  return flat.length > gist.replace(/…$/, '').length ? `${gist.replace(/…$/, '')}…` : gist;
+}
+
 function sessionToolRow(key, call, media) {
   const name = String(call?.name ?? media?.tool ?? '');
   const label = (Object.hasOwn(SESSION_TOOL_LABELS, name) && SESSION_TOOL_LABELS[name])
@@ -627,9 +643,11 @@ function sessionToolRow(key, call, media) {
   const result = sessionSafeValue(typeof call?.result === 'string' ? call.result : JSON.stringify(call?.result, null, 2));
   const clock = call?.startedAt ? new Date(call.startedAt).toLocaleTimeString('zh-CN', { hour12: false }) : '';
   const timing = [clock, Number.isFinite(call?.durationMs) ? `${call.durationMs} ms` : '', call?.attempt > 1 ? `第 ${call.attempt} 次运行` : ''].filter(Boolean).join(' · ');
+  const meta = (typeof TOOL_META !== 'undefined' && Object.hasOwn(TOOL_META, name)) ? TOOL_META[name] : null;
+  const purpose = meta?.cat ? String(meta.cat) : '';
   const summary = args ? args.replace(/\s+/g, ' ').slice(0, 100) : '';
   return `<details class="collapsible session-trace-row" data-session-fold="${esc(key)}">
-    <summary><span class="session-trace-operation"><span>${esc(label)}</span>${timing ? `<small>${esc(timing)}</small>` : ''}${summary ? `<small class="session-trace-args">${esc(summary)}</small>` : ''}</span><small class="${call?.isError ? 'session-trace-failed' : ''}">${esc(status)}</small></summary>
+    <summary><span class="session-trace-operation"><span>${esc(label)}</span>${purpose ? `<small class="session-trace-purpose">${esc(purpose)}</small>` : ''}${timing ? `<small>${esc(timing)}</small>` : ''}${summary ? `<small class="session-trace-args">${esc(summary)}</small>` : ''}</span><small class="${call?.isError ? 'session-trace-failed' : ''}">${esc(status)}</small></summary>
     <div class="session-trace-body">
       ${name ? `<code>${esc(name)}</code>` : ''}
       ${call?.isError ? `<div><code>${esc(sessionToolCode(call) || '未提供错误代码')}</code><p>${esc(sessionToolReason(call))}</p></div>` : ''}
@@ -660,9 +678,33 @@ function sessionTrace(session) {
     } else if (item?.role === 'assistant') {
       round++;
       const reasoning = sessionReasoning(item);
-      if (reasoning) operations.push(`<details class="collapsible session-trace-row" data-session-fold="reasoning-${i}">
-        <summary>第 ${round} 轮 · 模型返回的思考原文</summary><div class="session-trace-body session-trace-text">${esc(reasoning)}</div></details>`);
+      if (reasoning) {
+        const gist = sessionReasonGist(reasoning);
+        operations.push(`<div class="session-thought">
+          <p class="session-thought-gist">${esc(gist)}</p>
+          <details class="collapsible session-trace-row" data-session-fold="reasoning-${i}">
+            <summary>第 ${round} 轮 · 完整思考原文 <small>${reasoning.length} 字符</small></summary>
+            <div class="session-trace-body session-trace-text">${esc(reasoning)}</div>
+          </details>
+        </div>`);
+      }
     }
+  }
+  const digest = operations.length && !hasExecutions
+    ? ''
+    : '';
+  const toolNames = (Array.isArray(session.toolExecutions) && session.toolExecutions.length
+    ? session.toolExecutions
+    : (Array.isArray(session.messages) ? session.messages : []).filter(item => item?.toolCall).map(item => item.toolCall))
+    .filter(call => call && call.name && call.name !== 'finish')
+    .map(call => (Object.hasOwn(SESSION_TOOL_LABELS, call.name) && SESSION_TOOL_LABELS[call.name])
+      || (typeof TOOL_META !== 'undefined' && Object.hasOwn(TOOL_META, call.name) && TOOL_META[call.name].name)
+      || call.name);
+  if (toolNames.length) {
+    const counts = new Map();
+    for (const name of toolNames) counts.set(name, (counts.get(name) || 0) + 1);
+    const text = [...counts].map(([name, n]) => (n > 1 ? `${name}×${n}` : name)).join(' · ');
+    operations.unshift(`<p class="session-tools-digest">本次调用 ${toolNames.length} 个工具：${esc(text)}</p>`);
   }
   return { operations, finish };
 }
@@ -687,6 +729,42 @@ function sessionFailure(session) {
   </section>`;
 }
 
+/** 本轮判定：为什么回、为什么不回、按什么档位读了多少条。 */
+function sessionDecision(session) {
+  const sent = Array.isArray(session.sent) ? session.sent : [];
+  const reason = String(session.contextReason || '').trim();
+  const tier = Number(session.contextTier);
+  const limit = Number(session.contextLimit);
+  const trigger = String(session.triggerText || '').replace(/\s+/g, ' ').slice(0, 160);
+  const rows = [];
+  const verdict = sent.length
+    ? `已回复（${sent.length} 条消息）`
+    : (session.status === 'running' || session.status === 'waiting') ? '处理中' : '本轮没有发送消息';
+  rows.push(['结果', verdict]);
+  if (reason) rows.push(['判定依据', reason]);
+  if (Number.isFinite(tier) && tier > 0) rows.push(['参与档位', `第 ${tier} 档${Number.isFinite(limit) && limit > 0 ? ` · 读 ${limit} 条上下文` : ''}`]);
+  if (session.proactive) rows.push(['触发方式', '主动机会（群里安静了一会儿）']);
+  const executions = Array.isArray(session.toolExecutions) && session.toolExecutions.length
+    ? session.toolExecutions.filter(call => call.name !== 'finish')
+    : (Array.isArray(session.messages) ? session.messages : []).filter(item => item?.toolCall && item.toolCall.name !== 'finish').map(item => item.toolCall);
+  if (executions.length) {
+    const names = [...new Set(executions.map(call => (Object.hasOwn(SESSION_TOOL_LABELS, call.name) && SESSION_TOOL_LABELS[call.name]) || call.name))];
+    rows.push(['工具调用', `${executions.length} 次 · ${names.join('、')}`]);
+  }
+  if (session.finishReason) rows.push(['结束摘要', String(session.finishReason)]);
+  else if (!sent.length && session.status !== 'running' && session.status !== 'waiting') {
+    rows.push(['结束说明', '模型结束本轮时没有调用发送工具，也没有留下摘要——这一轮它就是没开口。']);
+  }
+  if (trigger) rows.push(['触发消息', trigger]);
+  if (!rows.length) return '';
+  return `<section class="session-trace-section session-decision" aria-labelledby="session-decision-title">
+    <h3 id="session-decision-title">本轮判定</h3>
+    <dl class="session-decision-list">
+      ${rows.map(([key, value]) => `<div class="session-decision-row"><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}
+    </dl>
+  </section>`;
+}
+
 function sessionDetailBody(session, jsonMode) {
   if (jsonMode) return `<pre class="session-trace-json">${esc(JSON.stringify(sessionSafeValue(session), null, 2))}</pre>`;
   const { operations, finish } = sessionTrace(session);
@@ -697,6 +775,7 @@ function sessionDetailBody(session, jsonMode) {
       <summary>系统提示 <small>${String(session.systemPrompt).length} 字符</small></summary>
       <div class="session-trace-body session-trace-text">${esc(session.systemPrompt)}</div>
     </details>` : ''}
+    ${sessionDecision(session)}
     <section class="session-trace-section" aria-labelledby="session-input-title">
       <h3 id="session-input-title">本次输入</h3>
       ${session.userPrompt ? `<details class="collapsible session-trace-row" data-session-fold="input" open>
