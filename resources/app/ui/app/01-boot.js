@@ -12,7 +12,7 @@ async function refreshStatus() {
     // 不再让用户面对一句干巴巴的"未连接"猜原因。
     const account = s.onebot.self?.nickname || s.onebot.self?.userId;
     label.textContent = s.onebot.connected
-      ? `Alcor 已连接${account ? `（${account}）` : ''}${s.alcor?.backendReady ? '' : ' · QQ 尚未就绪'}`
+      ? `Alcor 已连接${account ? `（${account}）` : ''}${s.alcor?.backendReady ? '' : ' · QQ ' + (window.qqShortOf?.(s.alcor?.qq?.code) || '尚未就绪')}`
       : (s.onebot.diagnosis || 'OneBot 未连接');
     label.title = s.onebot.connected ? '' : (s.onebot.error || '');
     $('#model-label').textContent = `模型：${s.orchestrator.model || '未设置'}`;

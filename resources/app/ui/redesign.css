@@ -2799,3 +2799,25 @@ html[data-theme] .update-banner .ub-actions {
 }
 
 html[data-theme] .update-banner .ub-actions .btn { text-decoration: none; }
+
+/* 二十九、QQ 接入诊断 */
+.qq-card { border: 1px solid var(--line); background: var(--bg2); padding: 14px 16px; }
+.qq-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.qq-head strong { font-family: var(--serif); font-size: 16px; }
+.qq-code { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--fg3); letter-spacing: .04em; }
+.qq-head.qq-good strong { color: var(--ok); }
+.qq-head.qq-ready strong { color: var(--ac); }
+.qq-head.qq-bad strong { color: var(--warn); }
+.qq-detail, .qq-hint { margin: 8px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--fg2); }
+.qq-hint { color: var(--fg1); }
+.qq-procs, .qq-dirs { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; }
+.qq-procs li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.qq-procs li em { font-style: normal; color: var(--fg3); }
+.qq-procs .qq-empty { color: var(--fg3); border-bottom: 0; }
+.qq-pid, .qq-ver { font-family: var(--mono); font-size: 11.5px; color: var(--fg2); }
+.qq-ok { color: var(--ok); } .qq-warn { color: var(--warn); } .qq-bad { color: #b4482f; }
+.qq-dirs li { font-size: 11.5px; color: var(--fg3); }
+.qq-dirs code { font-family: var(--mono); font-size: 11px; }
+.qq-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.qq-note { font-size: 11px; color: var(--fg3); }
+.qq-status { margin: 8px 0 0; font-size: 12px; color: var(--fg2); min-height: 1em; }

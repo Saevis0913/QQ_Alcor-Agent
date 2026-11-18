@@ -8,9 +8,12 @@ function validSelection(value) {
 }
 
 const retryDelays = [1000, 2000, 4000, 8000, 15000, 30000];
+// 恢复连接时「宿主已驻留」不是终点：上一次运行注入的宿主会一直留到 QQ 退出，
+// 这时清掉选择等于让用户每次开机都重新手动连一次。保留选择、放慢重试，等 QQ 重启后自动接上。
 const terminalFailures = new Set(['INVALID_QQ_PID', 'INVALID_QQ_SELECTION', 'UNSUPPORTED_QQ',
-  'NATIVE_PROCESS_CHANGED', 'NATIVE_ACCOUNT_CHANGED', 'HOST_ACCOUNT_CHANGED', 'HOST_ALREADY_PRESENT',
+  'NATIVE_PROCESS_CHANGED', 'NATIVE_ACCOUNT_CHANGED', 'HOST_ACCOUNT_CHANGED',
   'DISCONNECT_CURRENT_ACCOUNT_FIRST', 'CONTROLLER_CLOSED']);
+const restartQqFailures = new Set(['HOST_ALREADY_PRESENT']);
 
 export function createNativeResume(configFile, backend, { setTimeout: schedule = setTimeout, clearTimeout: cancel = clearTimeout } = {}) {
   const file = typeof configFile === 'string' && configFile ? path.resolve(configFile) + '.native-resume.json' : null;
@@ -86,7 +89,10 @@ export function createNativeResume(configFile, backend, { setTimeout: schedule =
           failureReported = true;
           try { onFailure?.(); } catch { /* Diagnostics must not break recovery scheduling. */ }
         }
-        if (terminal) {
+        if (restartQqFailures.has(error?.code || error?.message)) {
+          // 只有退出并重开 QQ 才能清掉残留宿主；在此之前每 30 秒轻量重试一次，不丢选择。
+          arm(30000, resume);
+        } else if (terminal) {
           // Never adopt a replacement process/account or a host owned by somebody else.
           try { clear(); } catch { /* Monitoring is stopped even if the stale file cannot be removed. */ }
         } else {

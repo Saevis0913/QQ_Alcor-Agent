@@ -86,8 +86,17 @@ export function createAlcorRuntime({ getSettings, dataDir, appRoot, nodeExecutab
     }
     await stopChild(); return { ok: false, code: 'ALCOR_START_FAILED', error: 'Alcor 未能启动，请检查配置和端口' };
   }
+  async function manage(route, { method = 'GET', body = null, timeoutMs = 8000 } = {}) {
+    const c = connection();
+    const res = await fetch(c.httpUrl + '/manage/' + route, { method,
+      headers: { authorization: 'Bearer ' + c.accessToken, ...(body ? { 'content-type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(timeoutMs) });
+    const text = await res.text();
+    let parsed = null; try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
+    return { ok: res.ok, status: res.status, body: parsed };
+  }
   return {
-    dir, configFile, connection, owned, logs, inspect,
+    dir, configFile, connection, owned, logs, inspect, manage,
     panelUrl: () => connection().httpUrl + '/panel/',
     panelLoginUrl: () => connection().httpUrl + '/panel/#token=' + encodeURIComponent(connection().accessToken),
     start() {

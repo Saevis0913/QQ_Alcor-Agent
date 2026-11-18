@@ -165,6 +165,7 @@ function renderSettings() {
       if ((d.chats || []).length && state.tab === 'settings') renderSettings();
     }).catch(() => {}).finally(() => { renderSettings.__chatsFetch = false; });
   }
+  try { window.renderQqLinkCard?.(); } catch { /* 诊断卡片失败不影响设置页 */ }
 }
 
 function renderSettingsSection(c) {
@@ -1062,6 +1063,8 @@ function renderDesktopSection(c) {
       <span class="hint" id="reset-data-hint" style="margin-left:10px"></span>
       <div class="hint" style="margin-top:6px">重置会永久删除本机配置、聊天记录、记忆和表情包。请先备份需要保留的资料。</div>
     </div>
+    <h3 id="settings-qq">QQ 接入</h3>
+    <div id="qq-link-card" class="qq-card"><p class="qq-detail">正在读取 QQ 进程…</p></div>
     <h3 id="settings-update">更新与 GitHub</h3>
     <div class="field">
       <div class="update-head">

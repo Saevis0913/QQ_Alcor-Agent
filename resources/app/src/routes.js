@@ -16,6 +16,8 @@ import { spawn } from 'node:child_process';
 import { getConfig, updateConfig, deepMerge as deepMergeConfig, DATA_DIR, ROOT } from './config.js';
 import { customSearch } from './web-search.js';
 import { readUpdateSource, writeUpdateSource } from './update-source.js';
+import { diagnoseQQ, scanFrameworkDirs, qqInstallRoots } from './qq-diagnosis.js';
+import { restartQQ, waitForQQ } from './qq-repair.js';
 import { listModels, chatCompletion, resolveApiKey, estimateCost, cacheHitRate } from './llm.js';
 import { resolveOfficialPrice, listOfficialPrices } from './model-prices.js';
 import { refreshPriceFeed, priceFeedStatus, initPriceFeed } from './price-feed.js';
@@ -66,6 +68,27 @@ export function createRoutes(deps) {
     buildUsageStats, buildUsageBreakdown,
     reloadSkills
   } = deps;
+
+  // QQ 连接排查：进程清单来自核心，判定逻辑只有一份（src/qq-diagnosis.js），界面、状态栏和自带排查程序共用。
+  let qqDiagCache = null;
+  async function collectQQDiagnosis(depsRef, { fresh = false } = {}) {
+    const state = await depsRef.alcorInspect();
+    const now = Date.now();
+    if (!fresh && qqDiagCache && now - qqDiagCache.at < 10_000
+      && qqDiagCache.running === state.running && qqDiagCache.backendReady === state.backendReady) return qqDiagCache.verdict;
+    let processes = [], connection = null;
+    if (state.running && typeof depsRef.alcorManage === 'function') {
+      try {
+        const result = await depsRef.alcorManage('processes');
+        processes = Array.isArray(result.body?.processes) ? result.body.processes : [];
+        connection = result.body?.connection || null;
+      } catch { /* 核心活着但进程清单读不到：仍然给出「核心在、QQ 未确认」的结论 */ }
+    }
+    const verdict = diagnoseQQ({ running: state.running, backendReady: state.backendReady, processes, connection,
+      frameworkDirs: scanFrameworkDirs(qqInstallRoots(processes)) });
+    qqDiagCache = { at: now, running: state.running, backendReady: state.backendReady, verdict };
+    return verdict;
+  }
 
   // 小工具：读请求体（容错：没 body 当空对象）。
   // 但 readBody 明确标记的可暴露错误（400 非法 JSON / 413 过大）必须透传，
@@ -138,7 +161,12 @@ export function createRoutes(deps) {
         const alcorState = await deps.alcorInspect();
         const slRunning = alcorState.running;
         let onebotDiagnosis = alcorState.error || '';
-        if (slRunning && !alcorState.backendReady) onebotDiagnosis = 'Alcor 已启动，账号状态尚未确认；请在 Alcor 控制台查看 QQ 接入';
+        let qqVerdict = null;
+        if (slRunning && !alcorState.backendReady) {
+          // 「连不上」有很多种，状态栏只说最贴近的那一种，完整排查在设置页的 QQ 接入诊断里。
+          try { qqVerdict = await collectQQDiagnosis(deps); onebotDiagnosis = qqVerdict.title + (qqVerdict.hint ? '：' + qqVerdict.hint : ''); }
+          catch { onebotDiagnosis = 'Alcor 已启动，账号状态尚未确认；请在 Alcor 控制台查看 QQ 接入'; }
+        }
         else if (slRunning && !onebot.connected) onebotDiagnosis = onebot.lastConnectError || '正在连接 Alcor…';
         return json(res, 200, {
           ...(deps.standard && { onebotEdition: { httpUrl: onebot.httpUrl, wsUrl: onebot.wsUrl, hasToken: Boolean(onebot.accessToken || onebot.httpToken) } }),
@@ -154,7 +182,8 @@ export function createRoutes(deps) {
             dir: alcorDir(),
             running: slRunning,
             webuiUrl: alcorWebuiUrl(),
-            ...alcorState
+            ...alcorState,
+            ...(qqVerdict ? { qq: { code: qqVerdict.code, title: qqVerdict.title, hint: qqVerdict.hint } } : {})
           },
           qqPortable: await qqPortableStatus(),
           orchestrator: orchestrator.statusSummary(),
@@ -305,6 +334,45 @@ export function createRoutes(deps) {
     {
       method: 'GET', pattern: '/api/alcor/logs',
       handler: async ({ res, json }) => json(res, 200, { logs: alcorLogs.slice(-200) })
+    },
+    {
+      method: 'GET', pattern: '/api/qq/diagnosis',
+      handler: async ({ res, json }) => {
+        const state = await deps.alcorInspect();
+        const verdict = await collectQQDiagnosis(deps, { fresh: true });
+        return json(res, 200, { status: 'ok', data: { ...verdict,
+          core: { running: state.running, backendReady: state.backendReady, code: state.code || null, error: state.error || '', version: state.version || '' } } });
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/qq/connect',
+      handler: async ({ res, json, body }) => {
+        const verdict = await collectQQDiagnosis(deps, { fresh: true });
+        const pid = Number(body?.pid) || verdict.candidate?.pid;
+        if (!pid) return json(res, 400, { status: 'failed', wording: verdict.code, error: verdict.hint || verdict.title });
+        const result = await deps.alcorManage('native/connect', { method: 'POST', body: { pid }, timeoutMs: 60_000 });
+        if (!result.ok || result.body?.status === 'failed') {
+          return json(res, 502, { status: 'failed', wording: result.body?.wording || result.body?.error || 'QQ_CONNECT_FAILED',
+            error: result.body?.wording || result.body?.error || '连接 QQ 失败' });
+        }
+        log('info', 'qq', 'QQ 原生宿主连接请求已提交 · PID ' + pid);
+        return json(res, 200, { status: 'ok', data: { pid, connection: result.body?.data || result.body || null } });
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/qq/restart',
+      handler: async ({ res, json }) => {
+        const listProcesses = async () => {
+          try { const r = await deps.alcorManage('processes'); return Array.isArray(r.body?.processes) ? r.body.processes : []; }
+          catch { return []; }
+        };
+        const restarted = await restartQQ({ listProcesses });
+        if (!restarted.ok) return json(res, 400, { status: 'failed', wording: restarted.code, error: restarted.error });
+        const rows = await waitForQQ({ listProcesses });
+        const verdict = await collectQQDiagnosis(deps, { fresh: true });
+        log('info', 'qq', '已重启 QQ 客户端 · ' + (verdict.code || ''));
+        return json(res, 200, { status: 'ok', data: { launched: restarted.launched, processes: rows.length, verdict } });
+      }
     },
     {
       method: 'POST', pattern: '/api/alcor/stop',

@@ -1134,6 +1134,7 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
     readBody, authorize,
     alcorDir, alcorWsPort, alcorWebuiUrl, alcorWebuiPort, alcorStatus, alcorLogs,
     launchAlcor, stopAlcor, alcorInspect, alcorPanelLoginUrl, alcorConnection: alcorRuntime.connection,
+    alcorManage: alcorRuntime.manage,
     qqPortableStatus, qqPortableLogs, launchPortableQQ, stopPortableQQ,
     visionScan, isPortOpen,
     buildUsageStats, buildUsageBreakdown,
