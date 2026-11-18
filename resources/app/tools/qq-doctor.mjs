@@ -56,16 +56,15 @@ const verdict = diagnoseQQ(report);
 if (json) {
   console.log(JSON.stringify({ report, verdict }, null, 2));
 } else {
-  formatReport({ ...verdict, running: report.running, backendReady: report.backendReady });
+  // 先把报告落盘，再打结论：这样「判定码」永远是屏幕上的最后一行。
+  try {
+    const file = path.join(dataDir, `qq-doctor-${Date.now()}.log`);
+    fs.writeFileSync(file, JSON.stringify({ report, verdict }, null, 2));
+    console.log(`报告已写入 ${file}`);
+  } catch { /* 只读运行，写不进也不影响结论 */ }
   if (report.configError) console.log(`配置：${report.configError}`);
-  console.log('');
+  formatReport({ ...verdict, running: report.running, backendReady: report.backendReady });
 }
-
-try {
-  const file = path.join(dataDir, `qq-doctor-${Date.now()}.log`);
-  fs.writeFileSync(file, JSON.stringify({ report, verdict }, null, 2));
-  if (!json) console.log(`报告已写入 ${file}`);
-} catch { /* 只读运行，写不进也不影响结论 */ }
 
 const codes = { ALREADY_CONNECTED: 0, READY_TO_CONNECT: 0, RECEIVE_NOT_READY: 1, HOST_PRESENT: 1, FOREIGN_MODULES: 1, NO_QQ_RUNNING: 1, UNSUPPORTED_BUILD: 2, PROCESS_UNREADABLE: 4 };
 process.exitCode = report.running ? (codes[verdict.code] ?? 3) : 3;

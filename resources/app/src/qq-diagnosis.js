@@ -111,7 +111,6 @@ export function formatReport(result) {
   line(`结论：${result.title}`);
   if (result.detail) line(`原因：${result.detail}`);
   if (result.hint) line(`处理：${result.hint}`);
-  line(`判定码：${result.code}`);
   line('');
   line(`核心状态：${result.running ? '运行中' : '未运行'}｜后端就绪：${result.backendReady ? '是' : '否'}`);
   if (result.connection) line(`会话：connected=${result.connection.connected === true} pid=${result.connection.pid ?? '-'} 尾号=${result.connection.accountLastFour ?? '-'}`);
@@ -129,4 +128,7 @@ export function formatReport(result) {
     for (const dir of result.frameworkDirs) line(`硬盘残留：${dir.name} → ${dir.path}`);
   }
   line('');
+  line('--------------------------------------');
+  line(`判定码：${result.code}`);
+  line(`（${result.title}）`);
 }
