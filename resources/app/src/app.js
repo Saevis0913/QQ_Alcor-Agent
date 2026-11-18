@@ -32,6 +32,7 @@ import { startTelemetryLoop } from './telemetry.js';
 import { loadPlugins, watchPlugins } from './plugin-loader.js';
 import { skillManager } from './skills/manager.js';
 import { extractCandidateUrls, dispatchMediaLinks } from './media-links.js';
+import { startUpdateWatcher, stopUpdateWatcher } from './update-manager.js';
 import { createRoutes } from './routes.js';
 import * as instanceLockModule from './instance-lock.js';
 import { logger } from './logger.js';
@@ -63,7 +64,7 @@ function localVersion() {
    防止监听器链式递归（见 createApp 内的递归护栏注释）。 */
 const appLogFns = new WeakSet();
 
-export function createApp({ log = console.log, qzoneProvider, onRestart, standard = isStandardEdition(path.resolve(ROOT, '../..')) } = {}) {
+export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitForUpdate, standard = isStandardEdition(path.resolve(ROOT, '../..')) } = {}) {
   const cfg = getConfig();
   const privatePolicy = new PrivateMessagePolicy(path.join(DATA_DIR, 'private-message-policy.json'));
 
@@ -1126,6 +1127,7 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, standar
   // 路由 handler 通过闭包取用这些依赖，handleHttp 只负责匹配分发。
   const apiRoutes = createRoutes({
     store, memory, sessions, onebot, orchestrator, inbox, qzone, stickers, onRestart, standard, configureStandardConnection,
+    quitForUpdate: onQuitForUpdate,
     emit, log,
     localVersion,
     sanitizeConfig, keyEndpointAllowed, sanitizeProvider,
@@ -1429,6 +1431,7 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, standar
     log(`控制台已就绪：http://127.0.0.1:${port}`);
     log(`OneBot（Alcor）: ws=${getConfig().alcor?.wsUrl} http=${getConfig().alcor?.httpUrl}`);
     log(`模型: ${getConfig().api.model || '（未设置，请在设置里选择）'} @ ${getConfig().api.baseUrl}`);
+    startUpdateWatcher({ current: localVersion(), standard, log });
     return port;
   }
 
@@ -1464,6 +1467,7 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, standar
 
   async function stop() {
     stopping = true;
+    try { stopUpdateWatcher(); } catch { /* watcher 未启动 */ }
     clearInterval(builtinStatusTimer);
     for (const item of skillManager.list()) skillManager.deactivate(item.id);
     builtinRuntime?.close();

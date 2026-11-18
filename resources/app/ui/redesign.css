@@ -2750,3 +2750,52 @@ html[data-theme] .session-tools-digest {
   border-left: 1px solid var(--ac-line);
   background: var(--bg2);
 }
+
+/* ── 二十八、自动更新横幅 ─────────────────────────────────────── */
+html[data-theme] .update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 26px;
+  border-bottom: 1px solid var(--bd);
+  background: linear-gradient(90deg, var(--ac-soft), transparent 72%), var(--bg1);
+}
+
+html[data-theme] .update-banner[hidden] { display: none; }
+
+html[data-theme] .update-banner .ub-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  background: var(--ac);
+  transform: rotate(45deg);
+}
+
+html[data-theme] .update-banner .ub-text {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--tx);
+}
+
+html[data-theme] .update-banner .ub-text b { font-weight: 650; letter-spacing: .01em; }
+
+html[data-theme] .update-banner .ub-sub {
+  color: var(--tx3);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html[data-theme] .update-banner .ub-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+html[data-theme] .update-banner .ub-actions .btn { text-decoration: none; }

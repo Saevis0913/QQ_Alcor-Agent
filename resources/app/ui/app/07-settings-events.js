@@ -1029,10 +1029,38 @@ function bindSettingsEvents(c) {
       status.textContent = version + published;
       notes.textContent = result.notes || '';
       notes.hidden = !notes.textContent;
+      // 有新版就地把「下载」按钮换成「下载并自动安装」，交给后端下载 + 校验 + 拉起安装器
       const url = updateDownloadUrl(result);
-      if (url) {
+      if (result.hasUpdate) {
+        download.textContent = '下载并自动安装';
+        download.href = '#';
+        download.hidden = false;
+        download.onclick = async (event) => {
+          event.preventDefault();
+          if (download.dataset.busy === '1') return;
+          download.dataset.busy = '1';
+          const prev = download.textContent;
+          download.textContent = '正在下载…';
+          status.textContent = '正在下载安装包，完成后会提示重启安装。';
+          try {
+            const dl = await api('/api/update-download', { method: 'POST', body: '{}' });
+            status.textContent = '校验通过，正在启动安装程序…';
+            await api('/api/update-install', { method: 'POST', body: '{}' });
+            status.textContent = '安装程序已启动，应用即将退出并自动升级。';
+            download.textContent = '安装中…';
+            if (dl?.data?.bytes) $('#update-source-hint').textContent = '安装包 ' + Math.round(dl.data.bytes / 1048576 * 10) / 10 + ' MB，已校验 SHA-256。';
+          } catch (error) {
+            status.textContent = '更新失败：' + (error.message || '未知原因');
+            download.textContent = prev;
+          } finally {
+            delete download.dataset.busy;
+          }
+        };
+      } else if (url) {
+        download.textContent = '打开发布页';
         download.href = url;
         download.hidden = false;
+        download.onclick = null;
       }
     } finally {
       updateButton.disabled = false;

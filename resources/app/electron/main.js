@@ -315,7 +315,9 @@ app.whenReady().then(async () => {
     bootDiag('src/app.js 已导入');
     const qzoneProvider = hiddenVerification ? undefined : (await import('./qzone.js')).createElectronQzoneProvider();
     core = createApp({ log: (...args) => console.log(...args), qzoneProvider,
-      onRestart: () => { app.relaunch(); quitting = true; app.quit(); } });
+      onRestart: () => { app.relaunch(); quitting = true; app.quit(); },
+      // 自动更新：安装器接手后由它重启应用（/RESTARTAPPLICATIONS），这里只负责干净退出
+      onQuitForUpdate: () => { quitting = true; app.quit(); } });
     // 先启动服务拿到真实端口，再开窗口。
     // 原先是 createWindow(core.lastPort ?? 3210) 在前、core.start() 在后 ——
     // 此时 lastPort 尚未赋值，窗口恒按 3210 加载；若端口被占用顺延到 3211+，

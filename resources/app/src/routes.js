@@ -41,6 +41,7 @@ import { fetchMessageImage } from './onebot.js';
 import { detectDialect as detectThinkingDialect } from './thinking.js';
 import { createQzoneRoutes } from './qzone-routes.js';
 import { checkReleaseUpdate, releaseProjectUrl } from './release-update.js';
+import { updateState, downloadUpdate, installUpdate } from './update-manager.js';
 import { createDesktopActions } from './desktop-actions.js';
 import { createChatActionRoutes } from './chat-actions.js';
 import { chatAllowed } from './inbound-policy.js';
@@ -1087,6 +1088,34 @@ export function createRoutes(deps) {
           return json(res, 200, saved);
         } catch (error) {
           const code = /^[A-Z_]+$/.test(error && error.message ? error.message : '') ? error.message : 'UPDATE_SOURCE_INVALID';
+          return json(res, 400, { status: 'failed', retcode: 400, data: null, wording: code });
+        }
+      }
+    },
+    {
+      method: 'GET', pattern: '/api/update-status',
+      handler: async ({ res, json }) => json(res, 200, updateState())
+    },
+    {
+      method: 'POST', pattern: '/api/update-download',
+      handler: async ({ res, json }) => {
+        try {
+          const state = await downloadUpdate();
+          return json(res, 200, { status: 'ok', data: { latest: state.latest, bytes: state.readyBytes, path: state.readyPath } });
+        } catch (error) {
+          const code = String(error?.code || '').match(/^[A-Z_]+$/) ? String(error.code) : 'UPDATE_DOWNLOAD_FAILED';
+          return json(res, 502, { status: 'failed', retcode: 502, data: null, wording: code });
+        }
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/update-install',
+      handler: async ({ res, json }) => {
+        try {
+          const result = installUpdate({ onQuit: () => deps.quitForUpdate?.() });
+          return json(res, 200, { status: 'ok', data: result });
+        } catch (error) {
+          const code = String(error?.code || '').match(/^[A-Z_]+$/) ? String(error.code) : 'UPDATE_INSTALL_FAILED';
           return json(res, 400, { status: 'failed', retcode: 400, data: null, wording: code });
         }
       }
