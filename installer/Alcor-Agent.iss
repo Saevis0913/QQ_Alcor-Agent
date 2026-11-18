@@ -1,0 +1,243 @@
+﻿#ifndef Payload
+  #define Payload "..\payload"
+#endif
+[Setup]
+AppId={{67D615C6-B01A-4880-A0AE-26C0AFC01000}
+AppName=Alcor Agent
+AppVersion=0.2.4
+AppVerName=Alcor Agent 正式版 v0.2.4
+VersionInfoVersion=0.2.4.0
+AppPublisher=Alcor
+AppComments=Alcor Agent 正式版 v0.2.4 · 搭载 Alcor 接入框架的 AI QQ 智能体
+DefaultDirName=D:\Alcor
+DefaultGroupName=Alcor
+DisableProgramGroupPage=yes
+DisableWelcomePage=no
+DisableDirPage=no
+PrivilegesRequired=lowest
+WizardStyle=modern
+WizardSizePercent=115
+WizardBackColor=$F5F2F9
+UninstallDisplayIcon={app}\Alcor Agent.exe
+UninstallDisplayName=Alcor Agent 正式版 v0.2.4
+SetupIconFile=..\payload\resources\app\assets\icon.ico
+OutputDir=..\out
+OutputBaseFilename=Alcor-Agent-Setup-0.2.4-x64
+Compression=lzma2/normal
+SolidCompression=yes
+CloseApplications=no
+RestartApplications=no
+SetupLogging=yes
+InfoBeforeFile=INSTALLATION.txt
+
+[Languages]
+Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
+
+[LangOptions]
+chinesesimp.DialogFontName=Microsoft YaHei UI
+chinesesimp.DialogFontSize=9
+
+[Tasks]
+Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: checkedonce
+Name: "startmenuicon"; Description: "创建开始菜单快捷方式"; Flags: checkedonce
+
+[Files]
+Source: "{#Payload}\runtime\node.exe"; Flags: dontcopy
+Source: "{#Payload}\resources\app\src\environment-check.mjs"; Flags: dontcopy
+Source: "{#Payload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
+
+[Dirs]
+Name: "{app}\data"; Flags: uninsneveruninstall
+
+[Icons]
+Name: "{userdesktop}\Alcor Agent"; Filename: "{app}\Alcor Agent.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{userprograms}\Alcor\Alcor Agent"; Filename: "{app}\Alcor Agent.exe"; WorkingDir: "{app}"; Tasks: startmenuicon
+Name: "{userprograms}\Alcor\环境检测"; Filename: "{app}\Diagnose-Alcor.cmd"; WorkingDir: "{app}"; Tasks: startmenuicon
+
+[Run]
+Filename: "{app}\Alcor Agent.exe"; Description: "打开 Alcor Agent，完成首次配置"; Flags: postinstall nowait skipifsilent
+
+[Code]
+
+var
+  EnvironmentPage: TWizardPage;
+  ReportMemo: TNewMemo;
+  ReportHint: TNewStaticText;
+  CopyButton, RetryButton: TNewButton;
+  CheckPassed: Boolean;
+  CheckedDir, ReportFile: String;
+  InstalledReport: String;
+  InstalledPassed: Boolean;
+
+function WindowsLines(Value: String): String;
+begin
+  Result := Value;
+  StringChangeEx(Result, #13#10, #10, True);
+  StringChangeEx(Result, #10, #13#10, True);
+end;
+
+procedure CheckInstalledEnvironment(Sender: TObject);
+var ResultCode: Integer; Content: AnsiString; InstalledReportFile: String;
+begin
+  InstalledPassed := False;
+  InstalledReportFile := ExpandConstant('{app}\data\environment-report.txt');
+  if Exec(ExpandConstant('{app}\runtime\node.exe'), '"' + ExpandConstant('{app}\resources\app\src\environment-check.mjs') + '" --root "' + ExpandConstant('{app}') + '" --out "' + InstalledReportFile + '"', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then begin
+    if LoadStringFromFile(InstalledReportFile, Content) then InstalledReport := WindowsLines(UTF8Decode(Content))
+    else InstalledReport := '[ENV_REPORT_MISSING] 安装后的检测未生成报告，请运行安装目录的 Diagnose-Alcor.cmd。';
+    InstalledPassed := (ResultCode = 0) and FileExists(InstalledReportFile);
+  end else InstalledReport := '[NODE_START_FAILED] 安装后的检测无法启动。系统错误码：' + IntToStr(ResultCode) + #13#10 + '请复制本信息交给本地 AI 程序，保留 data 文件夹并重新运行安装包修复。';
+  ReportMemo.Text := InstalledReport;
+  if InstalledPassed then ReportHint.Caption := '文件已安装。下面是完整检测结果；请完成所有“待配置”项。'
+  else ReportHint.Caption := '文件已安装，但检测未通过。请复制全部缺失项和错误代码交给本地 AI 修复。';
+  if not InstalledPassed then WizardForm.RunList.Checked[0] := False;
+end;
+
+procedure CopyReport(Sender: TObject);
+begin
+  ReportMemo.SelectAll;
+  SendMessage(ReportMemo.Handle, $0301, 0, 0);
+  ReportHint.Caption := '报告已复制；如剪贴板受限，请在文本框中按 Ctrl+C。将完整报告发送给本地 AI 程序。';
+end;
+
+procedure CheckEnvironment(Sender: TObject);
+var ResultCode: Integer; Content: AnsiString;
+begin
+  CopyButton.Enabled := False;
+  RetryButton.Enabled := False;
+  CheckPassed := False;
+  CheckedDir := WizardDirValue;
+  ReportMemo.Text := '正在检查操作系统、目录、QQ 兼容性与配置，请稍候…';
+  WizardForm.Refresh;
+  try
+    ExtractTemporaryFile('node.exe');
+    ExtractTemporaryFile('environment-check.mjs');
+    ReportFile := ExpandConstant('{tmp}\alcor-environment.txt');
+    DeleteFile(ReportFile);
+    if Exec(ExpandConstant('{tmp}\node.exe'), '"' + ExpandConstant('{tmp}\environment-check.mjs') + '" --root "' + CheckedDir + '" --install --out "' + ReportFile + '"', ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then begin
+      if LoadStringFromFile(ReportFile, Content) then ReportMemo.Text := WindowsLines(UTF8Decode(Content))
+      else ReportMemo.Text := '[ENV_REPORT_MISSING] 检测未生成报告。请重试或将本错误代码发送给本地 AI。';
+      CheckPassed := (ResultCode = 0) and FileExists(ReportFile);
+    end else begin
+      ReportMemo.Text := '[NODE_START_FAILED] 内置检测运行时无法启动。系统错误码：' + IntToStr(ResultCode) + #13#10 + '请确认 Windows x64 与目录权限，将完整信息发给本地 AI 程序。';
+    end;
+    if not IsX64OS then begin
+      ReportMemo.Text := '[OS_UNSUPPORTED] 本产品需要 Windows x64。' + #13#10 + ReportMemo.Text;
+      CheckPassed := False;
+    end;
+  except
+    ReportMemo.Text := '[ENV_CHECK_FAILED] ' + GetExceptionMessage + #13#10 + '请复制此信息给本地 AI 程序。';
+  end;
+  CopyButton.Enabled := True;
+  RetryButton.Enabled := True;
+  if CheckPassed then ReportHint.Caption := '可继续安装。所有“待配置”项请在安装后完成；可复制完整报告交给本地 AI。'
+  else ReportHint.Caption := '请先修复报告中的“必须修复”项，然后重新检测。全部错误代码均列在下方。';
+end;
+
+procedure InitializeWizard;
+begin
+  EnvironmentPage := CreateCustomPage(wpSelectDir, '环境检测', '集中列出缺失项与错误代码，支持完整复制');
+  ReportHint := TNewStaticText.Create(WizardForm);
+  ReportHint.Parent := EnvironmentPage.Surface;
+  ReportHint.SetBounds(0, 0, EnvironmentPage.SurfaceWidth, ScaleY(38));
+  ReportHint.WordWrap := True;
+  ReportMemo := TNewMemo.Create(WizardForm);
+  ReportMemo.Parent := EnvironmentPage.Surface;
+  ReportMemo.SetBounds(0, ScaleY(42), EnvironmentPage.SurfaceWidth, EnvironmentPage.SurfaceHeight - ScaleY(88));
+  ReportMemo.ReadOnly := True;
+  ReportMemo.ScrollBars := ssVertical;
+  ReportMemo.WordWrap := True;
+  CopyButton := TNewButton.Create(WizardForm);
+  CopyButton.Parent := EnvironmentPage.Surface;
+  CopyButton.SetBounds(0, EnvironmentPage.SurfaceHeight - ScaleY(35), ScaleX(170), ScaleY(28));
+  CopyButton.Caption := '复制完整报告给本地 AI';
+  CopyButton.OnClick := @CopyReport;
+  RetryButton := TNewButton.Create(WizardForm);
+  RetryButton.Parent := EnvironmentPage.Surface;
+  RetryButton.SetBounds(ScaleX(184), CopyButton.Top, ScaleX(95), ScaleY(28));
+  RetryButton.Caption := '重新检测';
+  RetryButton.OnClick := @CheckEnvironment;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = EnvironmentPage.ID then CheckEnvironment(nil);
+  if CurPageID = wpFinished then begin
+    WizardForm.FinishedLabel.Visible := False;
+    WizardForm.FinishedHeadingLabel.Visible := False;
+    WizardForm.WizardBitmapImage2.Visible := False;
+    ReportHint.Parent := WizardForm.FinishedPage;
+    ReportHint.SetBounds(ScaleX(24), ScaleY(12), WizardForm.FinishedPage.Width - ScaleX(48), ScaleY(44));
+    ReportMemo.Parent := WizardForm.FinishedPage;
+    ReportMemo.SetBounds(ScaleX(24), ScaleY(60), WizardForm.FinishedPage.Width - ScaleX(48), WizardForm.FinishedPage.Height - ScaleY(142));
+    CopyButton.Parent := WizardForm.FinishedPage;
+    CopyButton.Left := ScaleX(24);
+    CopyButton.Top := WizardForm.FinishedPage.Height - ScaleY(74);
+    RetryButton.Parent := WizardForm.FinishedPage;
+    RetryButton.Left := ScaleX(208);
+    RetryButton.Top := CopyButton.Top;
+    RetryButton.OnClick := @CheckInstalledEnvironment;
+    WizardForm.RunList.Top := WizardForm.FinishedPage.Height - ScaleY(35);
+    WizardForm.RunList.Left := ScaleX(24);
+    WizardForm.RunList.Width := WizardForm.FinishedPage.Width - ScaleX(48);
+    WizardForm.RunList.Height := ScaleY(30);
+    ReportMemo.Text := InstalledReport;
+    if not InstalledPassed then WizardForm.RunList.Checked[0] := False;
+  end;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID = EnvironmentPage.ID then Result := CheckPassed;
+end;
+
+procedure StopLockingProcesses();
+var
+  Root, ScriptPath, Script: String;
+  StopCode, Attempt: Integer;
+begin
+  Root := ExpandConstant('{app}');
+
+  { 宿主注入进程挂在 QQ 里，先退 }
+  Exec(ExpandConstant('{cmd}'), '/c taskkill /IM "qq-host-loader.exe" /F /T >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, StopCode);
+
+  { Agent 本体按镜像名杀：提升权限的实例拿不到 Path，按路径匹配会漏 }
+  Exec(ExpandConstant('{cmd}'), '/c taskkill /IM "Alcor Agent.exe" /F /T >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, StopCode);
+
+  { Agent 自带的 node：只杀安装目录下的 }
+  ScriptPath := ExpandConstant('{tmp}\alcor-stop.ps1');
+  Script := '$root = ' + #39 + Root + #39 + #13#10 +
+            'Get-CimInstance Win32_Process | Where-Object { $_.Name -eq ''node.exe'' -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }' + #13#10;
+  if SaveStringToFile(ScriptPath, Script, False) then
+    Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptPath + '"', '', SW_HIDE, ewWaitUntilTerminated, StopCode);
+
+  { 旧运行库注入在 QQ 里：QQ 会自动重启，所以连试三次 }
+  for Attempt := 1 to 3 do
+  begin
+    if not Exec(ExpandConstant('{cmd}'), '/c tasklist /FI "IMAGENAME eq QQ.exe" /NH | find /I "QQ.exe" >nul', '', SW_HIDE, ewWaitUntilTerminated, StopCode) then Break;
+    if StopCode <> 0 then Break;
+    if (Attempt = 1) and (not WizardSilent) then
+      MsgBox('升级需要先关闭 QQ。' + #13#10#13#10 +
+             '旧版运行库注入在 QQ 进程里，锁着 resources\alcor\artifacts\native\runtime 下的 DLL。' + #13#10 +
+             '不关 QQ 就会出现「DeleteFile 失败：错误代码 5」。' + #13#10#13#10 +
+             '点「确定」自动关闭 QQ；装完后请手动重新打开 QQ。', mbInformation, MB_OK);
+    Exec(ExpandConstant('{cmd}'), '/c taskkill /IM QQ.exe /F /T >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, StopCode);
+    Sleep(1500);
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  StopLockingProcesses();
+  if (CheckedDir <> WizardDirValue) or not CheckPassed then CheckEnvironment(nil);
+  if not CheckPassed then Result := '环境检测未通过。请返回环境检测页，复制完整报告交给本地 AI 程序。' else Result := '';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then StopLockingProcesses();
+  if CurStep = ssPostInstall then begin
+    CopyFile(ReportFile, ExpandConstant('{app}\data\installation-environment.txt'), False);
+    CheckInstalledEnvironment(nil);
+  end;
+end;

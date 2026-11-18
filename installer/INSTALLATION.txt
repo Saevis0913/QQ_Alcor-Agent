@@ -1,0 +1,41 @@
+﻿Alcor Agent 正式版 v0.2.4 安装与使用
+
+1. 安装到当前 Windows 用户可写的目录，默认 D:\Alcor。没有 D 盘时可选择其他本地磁盘。程序、网页文件、用户数据和缓存保存在所选目录。建议至少留出 1.5 GB，并为后续附件和聊天记录预留更多空间。
+2. 运行环境：Windows 10 2004 / Windows 11 x64，或对应较新的 x64 Windows Server；Windows PowerShell 5.1。安装包内已包含 Node.js、Electron、Chromium 和 Alcor 原生运行库，无需自行安装开发工具。
+3. QQ 前置要求：正常安装、联网并登录 QQ。按 wrapper.node 的 SHA-256 精确匹配构建：QQ 9.9.36-53644 x64 已有运行实测；QQ 9.9.37-54395 x64 已完成静态适配，待实际运行验证（报告 QQ_STATIC_ADAPTED 提示）。其他模块会报告 QQ_BUILD_UNSUPPORTED，不能只凭版本号判断兼容；不要盲目降级或替换正在运行的 QQ。安装检查不会读取 QQ 密码或发送消息。
+4. 打开桌面“Alcor Agent”。首次启动生成当前安装独立的本地访问令牌，并避开已占用的默认端口；不会自动登录或接入 QQ。首次状态为暂停，白名单与人设库为空。
+5. 进入 Alcor 页，启动核心，点击“打开控制台（免输令牌）”，选择已登录的 QQ 进程接入。需要手动登录控制台时，可在 Agent 的 Alcor 页显示或复制令牌。
+6. 在“设置 → 模型 API”填写兼容接口地址、模型名和服务要求的 API Key；支持云端服务或本地 AI 的兼容接口。正常联网/本地模型服务可用后，主动点击测试。
+7. 在“设置 → 人设”自行添加人设或填写角色设定，再在“聊天白名单”加入授权测试的 QQ 号。选择回复模式，保存后点击“恢复”。一档不回复任何消息；二档只回复群内 @；三档按 0.1–99.9% 概率判断；四档允许所有消息触发。私聊不受上述档位限制：只要没被暂停、屏蔽或白名单挡掉，对方发来一条就回一条；私聊日限在「私聊规则」里单独设置，默认 0（不限）。白名单、暂停、发送限流仍然有效。
+
+公开设置与个人信息
+安装包包含现有的 9 个插件、5 个技能，以及经过字段白名单过滤的公开设置模板：界面主题、回复和表情档位、节奏、私聊日限、空间只读时间、内置扩展开关等。不会包含本机 API Key、模型服务配置、管理员 QQ、特殊好友、聊天白名单、聊天记录、存档、记忆、登录态或个人提示词。
+首次使用需要自行填写 API 和模型、添加人设，设置自己的管理员 QQ 与聊天白名单；程序保持暂停，直到你检查设置并主动恢复。公开模板只用于新建配置，覆盖安装保留已有个人配置。
+
+当前能力边界
+原生核心支持群聊和私聊文本、群成员和联系人查询及相应的入站媒体读取。视频、动图抽帧和常见音频转换需要当前用户 PATH 中的 FFmpeg，视频元信息读取需要 FFprobe。本地语音转写使用随发行包提供的 resources\media-runtime 中的 Whisper 和多语种模型。相关依赖缺失会提示受影响的媒体功能，基础文字功能仍可使用。
+
+环境检测与本地 AI 排错
+安装向导会集中显示全部检查结果。必须修复项会阻止继续安装；QQ 登录、AI 和白名单属于安装后配置，不会阻止文件安装。
+可随时在“Alcor → 安装导航与环境检测”重新检测，并点击“复制完整报告”。若 Agent 无法打开，运行安装目录的 Diagnose-Alcor.cmd；报告保存在 data\environment-report.txt。
+请把完整报告中的缺失信息和错误代码发给本地 AI 程序，让它逐项定位和修复。报告不包含 QQ 密码、访问令牌或模型密钥，请勿额外提供这些秘密。
+常见代码：AGENT_CONFIG_INVALID / ALCOR_CONFIG_INVALID 配置损坏；PORT_COLLISION 两个服务端口冲突；SYSTEM_COMPONENTS_MISSING Windows 组件缺失；OS_UNSUPPORTED 操作系统不支持；DIRECTORY_NOT_WRITABLE 目录不可写；DISK_SPACE_LOW 空间不足；PAYLOAD_MISSING 文件缺失；UPGRADE_PROCESS_RUNNING 当前安装仍在运行；UPGRADE_FILE_IN_USE 发行文件被占用或不可写；UPGRADE_PATH_UNSAFE 安装路径含链接；SYSTEM_INSPECTION_FAILED 系统检测失败；QQ_NOT_INSTALLED 未检测到 QQ；QQ_NOT_READY QQ 未准备好；QQ_BUILD_UNSUPPORTED QQ 模块未适配；QQ_STATIC_ADAPTED 精确构建已静态适配但待运行验证；PORT_BUSY 默认端口占用；AI_NOT_CONFIGURED 模型配置缺失；ALLOWLIST_EMPTY 白名单为空。
+媒体提示：FFMPEG_UNAVAILABLE、FFPROBE_UNAVAILABLE 表示当前 PATH 中的命令无法运行。WHISPER_CLI_UNAVAILABLE、WHISPER_MODEL_INVALID 表示语音可执行文件或模型缺失或不可用。安装或修复相关依赖后，在安装导航中重新检测。
+
+更新与卸载
+升级不需要卸载重装，也不用重新配置：直接运行新版本的安装包即可原地升级。安装向导会检测当前安装目录里已有的 Alcor Agent 与 Alcor 核心，读出旧版本号并在环境检测页顶部写明这次是原地升级。升级只替换程序文件（Alcor Agent.exe、resources、runtime、原生接入核心），data 目录内的 QQ 会话记录、记忆存档、用量统计、插件与 Skill、人设、白名单、令牌与端口配置整体保留：安装包里不含任何 data 路径，安装前的清单校验会主动拒绝触碰 data，用户自建的插件与 Skill 目录也不会被删除。
+安装前请先从系统托盘完全退出旧版 Agent 并停止其核心。若旧版进程仍在占用安装目录，环境检测页会给出 UPGRADE_PROCESS_RUNNING / UPGRADE_FILE_IN_USE 提示，此时可点「退出旧版程序并继续升级」，在你确认后结束这些进程并自动重新检测；安装器不会擅自结束 QQ 或其他程序。QQ 仍加载原生宿主时，先在控制台安全断开；仍占用时保存工作后手动退出对应 QQ。卸载保留 data、插件和 Skill；需要彻底删除数据时请先自行备份，再删除安装目录中的用户文件。
+安装包尚未进行发行者代码签名。只使用与你取得的校验值一致的安装包，不要关闭系统安全检查。
+
+第三方说明
+Alcor Agent 基于 MIT 许可的 QQ Agent 修改，原作者及许可证见 resources\app\LICENSE 和 UPSTREAM-README.md。Electron/Chromium、Node.js、ws、MinHook 等许可证随包保留。
+程序免费；模型服务本身可能按所选提供商的规则收费。
+
+构建依据：Inno Setup 官方 https://jrsoftware.org/ ，Node.js 平台说明 https://github.com/nodejs/node/blob/main/BUILDING.md 。具体 QQ 模块兼容性以核心注册表中的精确校验值及验证状态为准，不能以版本号相近代替精确校验。
+
+本版更新（v0.2.4）
+- 新增「表情」页：收藏的表情按大小/日期/名称排序，可预览、改名标签、删除、手动添加，可设收藏上限，达上限后不再自动收藏。
+- 新增「QQ 接入」诊断卡与随包排查程序：连不上时按最后一行判定码处理（版本不支持 / 宿主残留 / 其他框架占用 / 核心未运行）。
+- 新增「检查更新」接入 GitHub：启动联网时自动检测，发现新版本可一键下载并安装，下载后校验 SHA-256。
+- 新增每轮「判定」卡与工具概览：能看出这一轮为什么回、为什么不回，以及每个工具用来做什么。
+- 修复：管理员名单被私聊规则覆盖、模型身份被空表单覆盖、动图表情因审核无法确认而收藏失败、已收表情 bytes 为 0、设置页选中文本无高亮、弹窗卡顿。
