@@ -1500,7 +1500,9 @@ async function saveConfig({ quiet = false } = {}) {
     patch.server = {
       ...c.server,
       autoStart: chk('#cfg-autostart', !!c.server?.autoStart),
-      closeToTray: chk('#cfg-closetray', c.server?.closeToTray !== false)
+      closeToTray: chk('#cfg-closetray', c.server?.closeToTray !== false),
+      splashEnabled: chk('#cfg-splash-enabled', c.server?.splashEnabled !== false),
+      splashSpeed: (() => { const v = Number(val('#cfg-splash-speed', c.server?.splashSpeed ?? 1)); return Number.isFinite(v) ? Math.min(4, Math.max(0.25, v)) : 1; })()
     };
     patch.ui = {
       ...(c.ui || {}),

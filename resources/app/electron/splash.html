@@ -5,61 +5,28 @@
 <title>Alcor Agent</title>
 <style>
   :root { color-scheme: dark; }
-  html, body { margin: 0; height: 100%; background: #07080a; overflow: hidden; }
-  #stage { position: fixed; inset: 0; display: grid; place-items: center; }
-  video { width: 100%; height: 100%; object-fit: cover; display: block; }
-  /* 跳过 / 倍速：只在鼠标进入下半屏时浮现，避免挡画面 */
-  #hud {
-    position: fixed; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px;
-    padding: 14px 18px 16px; font: 12px/1.4 "Microsoft YaHei UI", system-ui, sans-serif;
-    color: rgba(255, 255, 255, .82);
-    background: linear-gradient(to top, rgba(0, 0, 0, .72), rgba(0, 0, 0, 0));
-    opacity: 0; transition: opacity .22s ease; pointer-events: none;
+  html, body {
+    margin: 0; height: 100%; background: #000; overflow: hidden;
+    cursor: none;            /* 开屏只有画面，没有任何 UI，包括鼠标指针 */
+    user-select: none;
   }
-  body.hud #hud { opacity: 1; pointer-events: auto; }
-  #bar { flex: 1; height: 2px; background: rgba(255, 255, 255, .18); overflow: hidden; }
-  #bar > i { display: block; height: 100%; width: 0%; background: #d8ad63; transition: width .18s linear; }
-  .speeds { display: flex; gap: 4px; }
-  .speeds button {
-    appearance: none; border: 1px solid rgba(255, 255, 255, .22); background: rgba(20, 22, 26, .55);
-    color: rgba(255, 255, 255, .78); font: inherit; padding: 3px 8px; cursor: pointer; border-radius: 2px;
+  video {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; display: block; background: #000;
   }
-  .speeds button:hover { border-color: #d8ad63; color: #f3d9a8; }
-  .speeds button.on { background: #d8ad63; border-color: #d8ad63; color: #16120b; }
-  .hint { opacity: .7; letter-spacing: .02em; }
-  #skip {
-    appearance: none; border: 1px solid rgba(255, 255, 255, .22); background: transparent; color: inherit;
-    font: inherit; padding: 4px 10px; cursor: pointer; border-radius: 2px;
-  }
-  #skip:hover { border-color: #d8ad63; color: #f3d9a8; }
-  #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #6d7078; font: 13px/1.6 system-ui, sans-serif; }
 </style>
 </head>
 <body>
-  <div id="stage">
-    <video id="video" src="../assets/splash.mp4" muted playsinline preload="auto"></video>
-  </div>
-  <div id="loading">正在加载开场动画…</div>
-  <div id="hud">
-    <div class="speeds" id="speeds">
-      <button data-speed="0.5">0.5×</button>
-      <button data-speed="0.75">0.75×</button>
-      <button data-speed="1" class="on">1.0×</button>
-      <button data-speed="1.25">1.25×</button>
-      <button data-speed="1.5">1.5×</button>
-      <button data-speed="2">2.0×</button>
-    </div>
-    <div id="bar"><i></i></div>
-    <span class="hint">任意键 / 点击画面跳过</span>
-    <button id="skip">跳过</button>
-  </div>
+  <video id="video" src="../assets/splash.mp4" muted playsinline preload="auto"></video>
 <script>
   const video = document.getElementById('video');
-  const loading = document.getElementById('loading');
-  const bar = document.querySelector('#bar > i');
-  const speeds = document.getElementById('speeds');
-  let closed = false;
+  // 倍速来自设置（设置 → 连接与桌面 → 界面 → 开屏动画倍速），由主进程用查询串传进来。
+  // 这里不做任何 UI：只有视频、任意键或鼠标点击跳过。
+  const speed = Number(new URLSearchParams(location.search).get('speed'));
+  if (Number.isFinite(speed) && speed > 0) video.playbackRate = Math.min(4, Math.max(0.25, speed));
+  document.title = 'Alcor Agent · 开屏 ' + video.playbackRate + 'x';
 
+  let closed = false;
   function done() {
     if (closed) return;
     closed = true;
@@ -67,58 +34,18 @@
     window.splashShell?.done();
   }
 
-  // 任意键、鼠标点击、滚轮 —— 都算跳过（倍速按钮内部 stopPropagation，不算跳过）
-  const skipKeys = new Set(['Escape', 'Enter', ' ', 'Spacebar']);
-  window.addEventListener('keydown', (event) => {
-    // 方向键上/下顺手调倍速，其余任意键直接跳过
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      event.preventDefault();
-      stepSpeed(event.key === 'ArrowUp' ? 1 : -1);
-      return;
-    }
-    if (skipKeys.has(event.key) || event.key.length === 1 || event.ctrlKey || event.metaKey || event.altKey) done();
-  }, true);
+  window.addEventListener('keydown', () => done(), true);
   window.addEventListener('mousedown', () => done(), true);
+  window.addEventListener('pointerdown', () => done(), true);
   window.addEventListener('wheel', () => done(), { passive: true, capture: true });
+  window.addEventListener('touchstart', () => done(), { passive: true, capture: true });
 
-  document.getElementById('skip').addEventListener('click', (e) => { e.stopPropagation(); done(); });
-  speeds.addEventListener('mousedown', (e) => e.stopPropagation());
-  speeds.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-speed]');
-    if (!btn) return;
-    e.stopPropagation();
-    applySpeed(Number(btn.dataset.speed));
-  });
-
-  function applySpeed(rate) {
-    video.playbackRate = rate;
-    for (const b of speeds.querySelectorAll('button')) b.classList.toggle('on', Number(b.dataset.speed) === rate);
-  }
-  const ORDER = [0.5, 0.75, 1, 1.25, 1.5, 2];
-  function stepSpeed(dir) {
-    const i = ORDER.indexOf(video.playbackRate) ?? 2;
-    applySpeed(ORDER[Math.max(0, Math.min(ORDER.length - 1, (i < 0 ? 2 : i) + dir))]);
-  }
-
-  // 鼠标移动即露出控制条（3 秒后收回）
-  let hudTimer = null;
-  window.addEventListener('mousemove', () => {
-    document.body.classList.add('hud');
-    clearTimeout(hudTimer);
-    hudTimer = setTimeout(() => document.body.classList.remove('hud'), 2600);
-  });
-
-  video.addEventListener('loadeddata', () => { loading.remove(); });
-  video.addEventListener('error', () => { loading.textContent = '开场动画加载失败，正在进入…'; setTimeout(done, 700); });
-  video.addEventListener('timeupdate', () => {
-    if (!video.duration || !Number.isFinite(video.duration)) return;
-    bar.style.width = Math.min(100, (video.currentTime / video.duration) * 100).toFixed(1) + '%';
-  });
   video.addEventListener('ended', done);
-  // 静音自动播放失败（极少数机器）时也直接进入，别把用户卡在黑屏
-  video.play().catch(() => { loading.textContent = '正在进入…'; setTimeout(done, 900); });
-  // 兜底：视频异常长或卡住时最多 40 秒
-  setTimeout(done, 40_000);
+  // 解码失败 / 编码不支持：直接进主界面，别把用户卡在黑屏
+  video.addEventListener('error', done);
+  video.play().catch(() => setTimeout(done, 400));
+  // 兜底：视频卡住或时长异常时最多 45 秒
+  setTimeout(done, 45_000);
 </script>
 </body>
 </html>

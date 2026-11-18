@@ -1050,6 +1050,14 @@ function renderDesktopSection(c) {
     <div class="checkbox-row"><input type="checkbox" id="cfg-showvision" ${c.ui?.showVision !== false ? 'checked' : ''} />
       <label for="cfg-showvision">在模型目录显示图片输入能力</label></div>
     <div class="field"><label>界面数据轮询间隔（毫秒）</label><input type="number" id="cfg-refreshms" min="1000" step="1000" value="${esc(c.ui?.refreshMs ?? 15000)}" /></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-splash-enabled" ${c.server?.splashEnabled !== false ? 'checked' : ''} />
+      <label for="cfg-splash-enabled">启动时播放开屏动画</label></div>
+    <div class="field"><label for="cfg-splash-speed">开屏动画倍速</label>
+      <select id="cfg-splash-speed">
+        ${[0.5, 0.75, 1, 1.25, 1.5, 2].map((v) => `<option value="${v}"${Number(c.server?.splashSpeed ?? 1) === v ? ' selected' : ''}>${v}×${v === 1 ? '（原速）' : ''}</option>`).join('')}
+      </select>
+      <div class="hint">只影响启动时那段动画；播放中按任意键或点一下鼠标即可跳过。</div>
+    </div>
     <h3>数据管理</h3>
     <div class="field"><label>用户数据目录</label>
       <div style="display:flex;gap:8px">

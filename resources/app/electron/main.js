@@ -1,6 +1,6 @@
 // Electron 桌面壳：启动核心服务器（同一进程），打开会话式控制台窗口。
 // 傻瓜式：托盘常驻、关窗不退出、可选开机自启。
-import { app, BrowserWindow, Tray, Menu, nativeImage, session, shell, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, session, shell, dialog, ipcMain, screen } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -155,13 +155,21 @@ let core = null;
 let tray = null;
 let quitting = false;
 let splashWindow = null;
+let splashActive = false;   // 开屏播放期间主窗口先不显示，播完/跳过后再露出
 
 // 开屏动画（2026-11-18）：独立无边框窗口放 assets/splash.mp4，默认静音、可调倍速，
 // 任意键 / 鼠标点击 / 视频播完都会关掉它并露出主窗口。视频缺失或解码失败时
 // 直接跳过 —— 开屏不该成为进不去程序的理由。
 function closeSplash() {
   const win = splashWindow;
+  const wasActive = splashActive;
   splashWindow = null;
+  splashActive = false;
+  if (wasActive && mainWindow && !hiddenVerification && !mainWindow.isDestroyed()) {
+    // 开屏只覆盖主窗口那块矩形：它关掉的瞬间把主窗口亮出来，避免出现空桌面。
+    mainWindow.show();
+    mainWindow.focus();
+  }
   if (!win) return;
   try {
     if (!win.isDestroyed()) { win.removeAllListeners('closed'); win.destroy(); }
@@ -171,19 +179,28 @@ function closeSplash() {
 async function createSplash() {
   if (hiddenVerification) return;
   if (fs.existsSync(SKIP_SPLASH_FILE)) return;      // 排障开关：放一个文件即可跳过开屏
+  const server = (() => { try { return core?.getConfig?.()?.server || {}; } catch { return {}; } })();
+  if (server.splashEnabled === false) return;       // 设置里关掉了开屏
+  const rawSpeed = Number(server.splashSpeed);
+  const speed = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
+  console.log('[splash] 播放开屏动画，倍速 %sx', speed);
   const video = path.resolve(__dirname, '..', 'assets', 'splash.mp4');
   if (!fs.existsSync(video)) { console.warn('[splash] 未找到 assets/splash.mp4，跳过开屏'); return; }
   try {
+    // 只覆盖主窗口那块矩形：与主窗口同尺寸、居中、无边框，动画期间没有任何 UI。
+    const size = preferredWindowSize();
     splashWindow = new BrowserWindow({
-      width: 1120,
-      height: 630,
+      width: size.width,
+      height: size.height,
+      center: true,
       frame: false,
       resizable: false,
       movable: false,
       show: false,
       alwaysOnTop: true,
       skipTaskbar: true,
-      backgroundColor: '#07080a',
+      backgroundColor: '#000000',
+      hasShadow: false,
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
@@ -200,7 +217,8 @@ async function createSplash() {
     });
     splashWindow.webContents.on('did-fail-load', (_e, code, desc) => console.warn('[splash] 页面加载失败:', code, desc));
     splashWindow.on('closed', () => { splashWindow = null; });
-    await splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+    splashActive = true;
+    await splashWindow.loadFile(path.join(__dirname, 'splash.html'), { query: { speed: String(speed) } });
     // 视频播完 / 用户跳过都会走这里；再挂一个超时兜底，避免窗口卡在开屏。
     setTimeout(closeSplash, 42_000);
   } catch (error) {
@@ -250,10 +268,22 @@ function createTray() {
   tray.on('double-click', () => showWindow());
 }
 
+// 默认 1360x860，但绝不超出当前桌面可用区域——否则窗口右/下会被切掉，
+// 开屏用同一块矩形时看起来就像"覆盖整个屏幕"。
+function preferredWindowSize() {
+  const area = screen.getPrimaryDisplay().workAreaSize;
+  return {
+    width: Math.min(1360, Math.max(960, area.width - 40)),
+    height: Math.min(860, Math.max(600, area.height - 40))
+  };
+}
+
 function createWindow(port) {
+  const size = preferredWindowSize();
   mainWindow = new BrowserWindow({
-    width: 1360,
-    height: 860,
+    width: size.width,
+    height: size.height,
+    center: true,
     minWidth: 960,
     minHeight: 640,
     title: describeInstance(),
@@ -283,10 +313,11 @@ function createWindow(port) {
   });
   // 窗口打开先显示 loading 壳，等页面真正加载完成再亮相，避免白屏和用户反复双击
   mainWindow.once('ready-to-show', () => {
-    if (!hiddenVerification) mainWindow?.show();
+    // 开屏还在播时先躲在后面：开屏只覆盖窗口区域，主窗口提前露出会从底下透出来。
+    if (!hiddenVerification && !splashActive) mainWindow?.show();
   });
   mainWindow.webContents.on('did-finish-load', () => {
-    if (mainWindow) {
+    if (mainWindow && !splashActive) {
       if (!hiddenVerification) mainWindow.show();
       if (!hiddenVerification) mainWindow.focus();
     }

@@ -377,6 +377,8 @@ export const DEFAULT_CONFIG = {
     port: Number(process.env.ALCOR_AGENT_PORT) || (5320 + portOffset()),
     token: '',                // 留空 = 只监听 127.0.0.1
     autoStart: false,         // 开机自启（仅 Electron 桌面端生效）
+    splashEnabled: true,      // 启动时播放开屏动画（仅 Electron 桌面端生效）
+    splashSpeed: 1,           // 开屏动画倍速：0.25–4，1 = 原速
     closeToTray: true         // 点关闭 = 最小化到托盘
   },
   ui: {
