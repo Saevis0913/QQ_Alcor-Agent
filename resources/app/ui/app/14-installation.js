@@ -26,7 +26,7 @@ async function showInstallationGuide({firstRun=false}={}) {
       modal.querySelector('#installation-result').textContent=missing.length
         ? `${missing.length} 项需要处理`
         : warnings.length ? `检查通过，${warnings.length} 项提示` : '检查通过';
-    }catch(error){if(modal.isConnected){report.value=`[ENV_ENDPOINT_FAILED] 无法完成环境检测\n${error.message}\n请从托盘完全退出并重新启动 Agent，再点击重新检测。也可运行安装目录中的 Diagnose-Alcor.cmd。\n请复制本报告给本地 AI 程序。`;copy.disabled=false;modal.querySelector('#installation-result').textContent='检测未完成';}}
+    }catch(error){if(modal.isConnected){report.value=`[ENV_ENDPOINT_FAILED] 无法完成环境检测\n${error.message}\n请从托盘完全退出并重新启动 Agent，再点击重新检测。也可运行安装目录里的『控制台无法连接，显示被占用点这个，对照最后一行判定码.cmd』。\n请复制本报告给本地 AI 程序。`;copy.disabled=false;modal.querySelector('#installation-result').textContent='检测未完成';}}
     finally{retry.disabled=false;report.setAttribute('aria-busy','false');}
   }
   copy.onclick=async()=>{try{await navigator.clipboard.writeText(report.value);modal.querySelector('#installation-copy-status').textContent='完整报告已复制';}catch{report.focus();report.select();modal.querySelector('#installation-copy-status').textContent='请按 Ctrl+C 复制已选中的报告';}};
