@@ -45,7 +45,7 @@
         ${canConnect ? '<button class="btn btn-primary btn-small" data-qq="connect">连接 QQ</button>' : ''}
         <button class="btn btn-small" data-qq="restart">重启 QQ 后重试</button>
         <button class="btn btn-small" data-qq="rescan">重新扫描</button>
-        <span class="qq-note">排查程序：安装目录下的「诊断-QQ连接.cmd」</span>
+        <span class="qq-note">排查程序（安装目录）：「控制台无法连接，显示被占用点这个，对照最后一行判定码.cmd」</span>
       </div>
       <p class="qq-status" role="status"></p>`;
   }

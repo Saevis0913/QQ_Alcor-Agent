@@ -68,6 +68,27 @@ npm install
 npm start
 ```
 
+## 控制台显示「无法连接 / 被占用」怎么办
+
+程序不自带任何第三方框架（NapCat、SnowLuma、LiteLoader 都不在包里，见 `resources/alcor/native-core/discovery.mjs` 只做识别）。遇到连不上，双击安装目录里的：
+
+`控制台无法连接，显示被占用点这个，对照最后一行判定码.cmd`
+
+它只读地扫一遍本机，**最后一行判定码**按下面的表处理：
+
+| 判定码 | 含义 | 处理 |
+| --- | --- | --- |
+| `UNSUPPORTED_BUILD` | QQ 版本不支持 | 原生接入按 `wrapper.node` 的 SHA-256 精确匹配，当前只适配 `9.9.36-53644` 与 `9.9.37-54395`。换回这两个版本之一；QQ 自动更新后需要等新版本适配 |
+| `HOST_PRESENT` | 上次注入的宿主还驻留在 QQ 里 | 退出 QQ 重新登录，或点设置页的「重启 QQ 后重试」 |
+| `FOREIGN_MODULES` | 有其他框架占用 | 同一个号只能接入一个框架；退出 LiteLoaderQQNT / NapCat / LLOneBot / SnowLuma 等，报告会列出具体模块名 |
+| `CORE_OFFLINE` | Alcor 核心没在运行 | 先启动 Alcor 核心（侧栏「Alcor」页可启动），再回到设置页点「连接 QQ」 |
+| `NO_QQ_RUNNING` | 没检测到 QQ 进程 | 先登录 QQ |
+| `RECEIVE_NOT_READY` | 宿主连上了，账号或消息通道还没确认 | 在 QQ 里确认已登录，点「重新扫描」；一直不恢复就重启 QQ 再连 |
+| `READY_TO_CONNECT` | 一切就绪 | 点设置 → 连接与桌面 → 「连接 QQ」 |
+| `ALREADY_CONNECTED` | 已连接 | 无需处理 |
+
+同一份判定也显示在 **设置 → 连接与桌面 → QQ 接入** 卡片上，底栏状态会写成「QQ 版本未适配」「QQ 可以连接」这类短语。报告同时落盘在 `data/qq-doctor-<时间戳>.log`。
+
 ## 版本
 
 当前源码快照对应 **Alcor Agent 0.2.3**（正式版安装包 `Alcor-Agent-Setup-0.2.3-x64.exe`）。
