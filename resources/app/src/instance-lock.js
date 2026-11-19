@@ -11,6 +11,7 @@
 //   正常退出 / 被 kill 时删除锁文件。
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { DATA_DIR } from './config.js';
 
 const LOCK_FILE = path.join(DATA_DIR, 'alcor-agent.lock');
@@ -23,6 +24,44 @@ function pidAlive(pid) {
   } catch (error) {
     // EPERM = 进程存在但无权发信号（别的用户），也算活着
     return error?.code === 'EPERM';
+  }
+}
+
+/**
+ * 这个 PID 现在还是不是 Alcor Agent（Electron 主进程或 headless node）？
+ *
+ * 只看"进程还活着"是不够的：Windows 会回收 PID，上次被强杀留下的锁文件里那个
+ * PID 可能已经被 svchost.exe 之类的系统进程用掉 —— 于是每次启动都报
+ * 「已有实例在运行（PID 2936）」，永远起不来（2026-11-19 实际踩到）。
+ *
+ * @returns {true|false|null} true=确实是 Alcor，false=已被别的进程占用，null=查不出来
+ */
+function pidIsAlcor(pid) {
+  try {
+    if (process.platform === 'win32') {
+      const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+        encoding: 'utf8',
+        timeout: 4000,
+        windowsHide: true,
+      });
+      const first = String(out).split('\n').map((line) => line.trim()).find((line) => line.startsWith('"'));
+      if (!first) return null;
+      const name = (first.match(/^"([^"]+)"/)?.[1] ?? '').toLowerCase();
+      if (!name) return null;
+      return /^(alcor agent|alcor|node)\.exe$/.test(name);
+    }
+    // POSIX：优先读 /proc，读不到再问 ps
+    try {
+      const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\u0000/g, ' ');
+      if (cmdline.trim()) return /alcor|node/i.test(cmdline);
+    } catch { /* 非 Linux 或没权限，走 ps */ }
+    try {
+      const out = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 4000 });
+      const cmd = String(out).trim();
+      return cmd ? /alcor|node/i.test(cmd) : null;
+    } catch { return null; }
+  } catch {
+    return null;
   }
 }
 
@@ -55,7 +94,19 @@ export function acquireInstanceLock() {
         existingPid = Number(String(fs.readFileSync(LOCK_FILE, 'utf8')).trim()) || null;
       } catch { /* 读不出就当残留 */ }
       if (existingPid && existingPid !== process.pid && pidAlive(existingPid)) {
-        return { ok: false, reason: `已有 Alcor Agent 实例在运行（PID ${existingPid}）`, existingPid };
+        const identity = pidIsAlcor(existingPid);
+        if (identity === true) {
+          return { ok: false, reason: `已有 Alcor Agent 实例在运行（PID ${existingPid}）`, existingPid };
+        }
+        if (identity === null) {
+          // 查不出身份时保守处理：宁可拒绝启动，也不能双开重复回复。
+          return {
+            ok: false,
+            reason: `检测到锁文件记录的进程（PID ${existingPid}）仍在运行但无法确认身份；若不是 Alcor Agent，请删除 ${LOCK_FILE} 后重试`,
+            existingPid,
+          };
+        }
+        // identity === false：PID 已被系统回收给别的进程，这是残留锁，继续走清理分支。
       }
       // 残留锁（进程已死 / 锁是自己上次异常留下的）：删掉，下一轮用 wx 重新抢
       try { fs.unlinkSync(LOCK_FILE); } catch { /* 删不掉则下一轮 wx 仍 EEXIST，最终报错 */ }
