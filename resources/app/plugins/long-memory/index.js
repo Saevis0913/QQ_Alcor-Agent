@@ -19,7 +19,7 @@ export function activate() {
   if (stop) return;
   const runtime = getBuiltinRuntime();
   if (!runtime) return;
-  const enabled = () => getBuiltinRuntime() === runtime && api.isSkillActive(id);
+  const enabled = () => getBuiltinRuntime() === runtime && api.isSkillActive(id) && runtime.isPaused?.() !== true;
   memory = createLongMemory({ runtime, settings: api.config, enabled, warn: error => api.warn(error.message) });
   stop = startArchiveWorker({
     runtime, tick: memory.tick, enabled, everyMs: 15 * 60_000, report: error => api.warn(error.message)

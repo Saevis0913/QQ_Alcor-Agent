@@ -16,7 +16,7 @@ export function activate() {
   bound = runtime;
   service = createAdminErrors({
     runtime,
-    isEnabled: () => getBuiltinRuntime() === runtime && isSkillEnabledInConfig('admin-errors'),
+    isEnabled: () => getBuiltinRuntime() === runtime && isSkillEnabledInConfig('admin-errors') && runtime.isPaused?.() !== true,
     getAdmins: () => getConfig().privatePolicy?.adminQQs,
     getSettings: () => api.config()
   });

@@ -108,7 +108,12 @@ export function checkStickerDispatch(decision, { selfId, chatKey, sticker, histo
   if (decision.selfId !== String(selfId) || decision.chatKey !== chatKey) fail('STICKER_SCOPE_CHANGED', '本轮 QQ 账号或会话已变化');
   // 工具点名 / 用户点名的表情属于"明确请求"：不看档位、不看概率、不看最近十条配额，
   // 也不受表情总开关影响——库里存着的图任何时候都能发出去。限频、去重与记账仍由发送层负责。
-  if (decision.explicit === true) return true;
+  if (decision.explicit === true) {
+    // 明确请求不受档位、概率、窗口与总开关限制，但"一轮一张"仍然生效：
+    // 梗鲸与原生表情共用同一份 session.stickerPolicy，谁先发谁记账。
+    if (decision.attempted) fail('STICKER_ALREADY_SENT', '本轮已经发过一张表情，等对方回应后再说');
+    return true;
+  }
   if (decision.attempted) fail('STICKER_ALREADY_ATTEMPTED', '本轮已经提交过一张表情，不能换工具或重试再发');
   const tier = stickerTier(sticker);
   if (!tier.enabled) fail('STICKER_DISABLED', '表情发送总开关已关闭');

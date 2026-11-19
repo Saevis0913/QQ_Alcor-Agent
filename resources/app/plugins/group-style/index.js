@@ -20,7 +20,7 @@ export function activate() {
   if (stop) return;
   const runtime = getBuiltinRuntime();
   if (!runtime) return;
-  const enabled = () => getBuiltinRuntime() === runtime && api.isSkillActive(id);
+  const enabled = () => getBuiltinRuntime() === runtime && api.isSkillActive(id) && runtime.isPaused?.() !== true;
   const report = error => api.warn(error.message);
   const settings = () => {
     const options = api.config();

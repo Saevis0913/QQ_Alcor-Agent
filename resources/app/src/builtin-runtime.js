@@ -46,6 +46,8 @@ export function createBuiltinRuntime(services) {
     store: services.store, memory: services.memory, sender: services.sender,
     onebot: services.onebot, sessions: services.sessions, stickers: services.stickers,
     account, isCurrent, now,
+    // 机器人被暂停时后台任务（记忆归档、群风格学习、异常汇总）不该继续花模型额度或对外发消息。
+    isPaused: () => services.isPaused?.() === true,
     async status() {
       const state = await services.status?.() || {};
       return { connected: !!account(), backendReady: !!account(), receiveReady: !!account(), paused: false, ...state, selfId: account() };

@@ -350,8 +350,21 @@ export function resolveReceivedMedia(ctx, { messageId, stickerId, file } = {}) {
  * 每条消息仍然只带一张图，重复发送由发送层的去重与限频兜住。
  */
 function explicitStickerPolicy(ctx) {
-  return { version: 1, selfId: String(ctx.selfId), chatKey: ctx.chatKey, tier: 0,
+  const want = { version: 1, selfId: String(ctx.selfId), chatKey: ctx.chatKey, tier: 0,
     requested: true, explicit: true, eligible: true, roll: null, attempted: false };
+  const session = ctx?.session;
+  if (!session || typeof session !== 'object') return want;
+  // 许可挂在会话上：梗鲸发送走 ensureStickerDecision(session) 会读回同一个对象，
+  // 两个表情工具因此共享"本轮只发一张"的记账，不会各发一张。
+  const current = session.stickerPolicy;
+  if (current && current.selfId === want.selfId && current.chatKey === want.chatKey) {
+    current.explicit = true;
+    current.requested = true;
+    current.eligible = true;
+    return current;
+  }
+  session.stickerPolicy = want;
+  return want;
 }
 
 export async function sendReceivedMedia(ctx, args = {}, { send, sendImage } = {}) {

@@ -288,6 +288,7 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
     dataDir: DATA_DIR, store, memory, sender, onebot, sessions, stickers,
     account: () => onebot.connected && String(store.activeAccount || '') === String(onebot.selfId || '') ? String(onebot.selfId || '') : '',
     isEnabled: id => skillManager.isActive(id).active,
+    isPaused: () => orchestrator.paused || orchestrator.aborted,
     settings: id => skillManager.settingsOf(id),
     complete: chatCompletion,
     status: async () => {
