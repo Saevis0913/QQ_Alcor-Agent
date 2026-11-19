@@ -56,4 +56,4 @@ $$('.tab').forEach((tab) => {
   }
 })();
 
-$('#alcor-group-btn')?.addEventListener('click', () => showNoticeModal('群', '本Agent为基于QQ Agent开发的适配Alcor框架的程序，故不会出现收费要求，完全免费仅供分享，如有任何建议，可以来本群直接@群主：【1035391723】或是直接发邮箱：geo_lucas01@163.com'));
+$('#alcor-group-btn')?.addEventListener('click', () => showNoticeModal('群', '本Agent为基于QQ Agent开发的适配Alcor框架的程序，故不会出现收费要求，完全免费仅供分享，如有任何建议，可以来本群直接@群主：【644450900】或是直接发邮箱：geo_lucas01@163.com'));
