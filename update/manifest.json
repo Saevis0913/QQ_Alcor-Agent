@@ -3,15 +3,15 @@
   "latest": "0.3.1",
   "minSupported": "0.2.0",
   "applyMode": "restart",
-  "notes": "0.3.1：获取更新改成多源清单（9 条通路竞速，内置于程序内），小版本检测到即自动下载安装，装不上时改由已配置的模型给出下载地址兜底。",
-  "publishedAt": "2026-11-20T14:42:27.086Z",
+  "notes": "0.3.1：获取更新改成多源清单（9 条通路，内置于程序内），按版本号挑最新而不是谁先返回（CDN 缓存不会盖住新版本），小版本检测到即自动下载安装，装不上时改由已配置的模型给出下载地址兜底。",
+  "publishedAt": "2026-11-20T14:52:30.110Z",
   "rollout": 100,
   "full": {
     "urls": [
       "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.1-x64.exe"
     ],
-    "bytes": 319389598,
-    "sha256": "75f1317340b840b9081a83ace006ab3675c34a3f6806d5bda949e3c2dfd32c9e",
+    "bytes": 319447171,
+    "sha256": "df15f1aa4685f15b7c87a9074561e9dbb2d66a95255ab44b0d4c612070a7041d",
     "fileName": "Alcor-Agent-Setup-0.3.1-x64.exe"
   }
 }
