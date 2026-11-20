@@ -4,7 +4,7 @@ import http from 'node:http';
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createAlcorRuntime } from './alcor-runtime.js';
 import { fileURLToPath } from 'node:url';
 import { getConfig, updateConfig, storeConfigForChat, ROOT, DATA_DIR } from './config.js';
@@ -64,7 +64,7 @@ function localVersion() {
    防止监听器链式递归（见 createApp 内的递归护栏注释）。 */
 const appLogFns = new WeakSet();
 
-export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitForUpdate, standard = isStandardEdition(path.resolve(ROOT, '../..')) } = {}) {
+export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitForUpdate, onShowWindow, standard = isStandardEdition(path.resolve(ROOT, '../..')) } = {}) {
   const cfg = getConfig();
   const privatePolicy = new PrivateMessagePolicy(path.join(DATA_DIR, 'private-message-policy.json'));
 
@@ -106,6 +106,16 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
   const { acquireInstanceLock, releaseInstanceLock } = instanceLockModule;
   const lockResult = acquireInstanceLock();
   if (!lockResult.ok) {
+    // 同一数据目录已有核心在跑：先让那个实例把窗口亮出来（双击快捷方式的常见场景）。
+    // 用 spawnSync 调系统 curl —— createApp 是同步函数，这里不能 await。
+    try {
+      const port = Number(getConfig().listen?.port) || 5320;
+      const probe = spawnSync('curl', ['-s', '-m', '2', '-X', 'POST', 'http://127.0.0.1:' + port + '/api/window/show'], { windowsHide: true, timeout: 3000, encoding: 'utf8' });
+      if (probe.status === 0 && String(probe.stdout || '').includes('"ok":true')) {
+        log('[单实例] 已在运行的实例已唤出窗口，本次启动结束');
+        process.exit(0);
+      }
+    } catch { /* 唤不动就按原样报错 */ }
     // 不抛异常上抛让进程退出 —— 创建期的失败应当让整个启动失败。
     throw new Error(`[单实例] ${lockResult.reason}。如需多开测试，请用不同的 ALCOR_AGENT_DATA_DIR。`);
   }
@@ -1129,6 +1139,7 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
   const apiRoutes = createRoutes({
     store, memory, sessions, onebot, orchestrator, inbox, qzone, stickers, onRestart, standard, configureStandardConnection,
     quitForUpdate: onQuitForUpdate,
+    showWindow: typeof onShowWindow === 'function' ? onShowWindow : null,
     emit, log,
     localVersion,
     sanitizeConfig, keyEndpointAllowed, sanitizeProvider,

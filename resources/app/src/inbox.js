@@ -122,6 +122,14 @@ export class InboxStore {
     }
     return [...chats.values()].sort((a,b) => b.receivedAt - a.receivedAt);
   }
+  /** 清空全部最近收件（会话页「清空」用）。返回清掉的条数。 */
+  clear() {
+    const removed = this.messages.length;
+    this.messages = [];
+    this.#recalls.clear();
+    this.save();
+    return removed;
+  }
   forChat(chatKey) { return this.messages.filter(m => m.chatKey === chatKey); }
   mediaAt(receiptId, index) { return this.messages.find(m => m.id === receiptId)?.media?.[index]; }
 }

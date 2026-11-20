@@ -2835,3 +2835,27 @@ html[data-theme] .update-banner .ub-actions .btn { text-decoration: none; }
 .qq-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .qq-note { font-size: 11px; color: var(--fg3); }
 .qq-status { margin: 8px 0 0; font-size: 12px; color: var(--fg2); min-height: 1em; }
+
+/* ── 三十、搜索服务清单（2026-11-20）─────────────────────────────
+   .field 是「168px 标签 + 内容」两列网格，行内再用 min-width 撑开的 flex
+   会把「测试」按钮挤到别处（长标签一行就把后面的列推开）。改成固定列宽网格，
+   标签允许换行，按钮与结果各占一列，永远对齐。 */
+html[data-theme] .search-service-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px 62px minmax(0, 1.1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, .05);
+}
+html[data-theme] .search-service-row > span:first-child {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+html[data-theme] .search-service-row .search-test-result {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* 「逐个测试」按钮被 flex 压窄后文字会压到提示语上 */
+html[data-theme] #search-test-all-btn { flex: 0 0 auto; white-space: nowrap; min-width: 92px; padding: 4px 12px; }

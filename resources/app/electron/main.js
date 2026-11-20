@@ -3,6 +3,7 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, session, shell, dialog, ipcMain, screen } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dataDirName, describeInstance } from '../src/profile.js';
 
@@ -126,6 +127,14 @@ if (!gotLock) {
   //   b) 锁文件/锁管道创建失败（目录不可写、安全软件拦截）→ 之前同样静默退出，
   //      用户完全无从得知。现在把原因弹出来 + 写进 boot-diag.log。
   bootDiag('单实例锁获取失败，准备退出（可能已有实例，也可能锁创建失败）');
+  // 先请「正在跑的那个实例」把窗口亮出来：用户双击快捷方式的真实诉求是"看到界面"，
+  // 不是"进程启动成功"。唤得动就当打开成功，静默退出即可。
+  try {
+    for (const port of [5320, 5310, 3210]) {
+      const probe = spawnSync('curl', ['-s', '-m', '2', '-X', 'POST', 'http://127.0.0.1:' + port + '/api/window/show'], { windowsHide: true, timeout: 3000, encoding: 'utf8' });
+      if (probe.status === 0 && String(probe.stdout || '').includes('"ok":true')) { bootDiag('已唤出运行中的窗口 port=' + port); break; }
+    }
+  } catch { /* 唤不动就按原样退 */ }
   app.quit();
 } else {
   app.on('second-instance', () => showWindow());
@@ -406,7 +415,8 @@ app.whenReady().then(async () => {
     core = createApp({ log: (...args) => console.log(...args), qzoneProvider,
       onRestart: () => { app.relaunch(); quitting = true; app.quit(); },
       // 自动更新：安装器接手后由它重启应用（/RESTARTAPPLICATIONS），这里只负责干净退出
-      onQuitForUpdate: () => { quitting = true; app.quit(); } });
+      onQuitForUpdate: () => { quitting = true; app.quit(); },
+      onShowWindow: () => showWindow() });
     // 先启动服务拿到真实端口，再开窗口。
     // 原先是 createWindow(core.lastPort ?? 3210) 在前、core.start() 在后 ——
     // 此时 lastPort 尚未赋值，窗口恒按 3210 加载；若端口被占用顺延到 3211+，

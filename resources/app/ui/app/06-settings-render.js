@@ -290,6 +290,7 @@ function renderApiSection(c) {
 
 
 function renderSearchSection(c) {
+  setTimeout(() => window.renderSearchServiceList?.(), 0);
   // 每个提供方区块的初始显隐都要跟当前 provider 一致
   const prov = String(c.webSearch?.provider || 'bing');
   // 自定义搜索提供商列表（可多个），用于动态生成下拉框选项
@@ -314,6 +315,14 @@ function renderSearchSection(c) {
     </div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-websearch" ${c.webSearch?.enabled !== false ? 'checked' : ''} />
       <label for="cfg-websearch">允许模型搜索和读取网页（web_search / web_fetch）</label></div>
+    <div class="field" id="search-service-check">
+      <label>已有服务的实际可用性</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+        <button class="btn btn-small" id="search-test-all-btn" type="button">逐个测试</button>
+        <span id="search-test-hint" class="muted" style="font-size:12px">点一下会用「今天的新闻」真搜一次，只测连通，不改配置</span>
+      </div>
+      <div id="search-service-list" class="hint" style="font-size:12px;line-height:1.9">（正在读取服务清单…）</div>
+    </div>
     <div class="field"><label>搜索服务提供商</label>
       <select id="cfg-searchprovider">
         <option value="bing" ${prov === 'bing' ? 'selected' : ''}>Bing 网页解析</option>

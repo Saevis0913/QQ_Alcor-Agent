@@ -106,22 +106,63 @@ export async function bingSearch(query) {
   return { query, results };
 }
 
-/** 给工具用的统一入口：搜索 + 紧凑序列化。 */
-export async function webSearch(query) {
-  const clean = sanitizeQuery(query);
-  if (!clean) throw new Error('查询词为空');
-  const cfg = getConfig().webSearch ?? {};
-  const provider = String(cfg.provider || 'bing').toLowerCase();
+/** 每个内置搜索服务的展示名与鉴权要求（设置页与测试接口共用）。 */
+export const SEARCH_PROVIDER_META = [
+  { id: 'bing', label: 'Bing 网页解析', needsKey: false },
+  { id: 'deepseek', label: 'DeepSeek 原生搜索', needsKey: true, keyField: 'deepseek' },
+  { id: 'zhipu', label: '智谱 Web Search', needsKey: true, keyField: 'zhipu' },
+  { id: 'bocha', label: '博查 AI Search', needsKey: true, keyField: 'bocha' },
+  { id: 'baidu', label: '百度千帆 AI Search', needsKey: true, keyField: 'baidu' },
+  { id: 'metaso', label: '秘塔 AI 搜索', needsKey: true, keyField: 'metaso' }
+];
+
+/** 把 providerId 分派到具体实现。测试接口与运行时共用这一处，避免两套映射漂移。 */
+async function runProvider(providerId, clean) {
+  const provider = String(providerId || 'bing').toLowerCase();
   if (provider === 'deepseek') return deepSeekSearch(clean);
   if (provider === 'zhipu') return zhipuSearch(clean);
   if (provider === 'bocha') return bochaSearch(clean);
   if (provider === 'baidu') return baiduSearch(clean);
   if (provider === 'metaso') return metasoSearch(clean);
-  // 自定义：'custom'（旧单槽位）或 'custom:<id>'（设置页添加的多个之一）
-  if (provider === 'custom' || provider.startsWith('custom:')) {
-    return customSearch(clean, provider);
-  }
+  if (provider === 'custom' || provider.startsWith('custom:')) return customSearch(clean, provider);
   return bingSearch(clean);
+}
+
+/** 给设置页用：真跑一次指定服务，返回可用性与样例。 */
+export async function testSearchProvider(providerId, query = '今天的新闻') {
+  const startedAt = Date.now();
+  const clean = sanitizeQuery(query) || '今天的新闻';
+  try {
+    const r = await runProvider(providerId, clean);
+    return {
+      ok: true,
+      provider: String(providerId || 'bing'),
+      count: r.results.length,
+      sample: String(r.results[0]?.title || '').slice(0, 80),
+      url: String(r.results[0]?.url || '').slice(0, 120),
+      latencyMs: Date.now() - startedAt
+    };
+  } catch (error) {
+    return { ok: false, provider: String(providerId || 'bing'), error: String(error?.message ?? error).slice(0, 200), latencyMs: Date.now() - startedAt };
+  }
+}
+
+/** 给工具用的统一入口：搜索 + 紧凑序列化。
+ * 选定的服务若失败（没填 Key、额度用完、页面改版），自动回退 Bing 解析并标注
+ * fallback —— 模型侧永远能拿到结果，不会因为一个服务没配好就整轮搜不了。 */
+export async function webSearch(query) {
+  const clean = sanitizeQuery(query);
+  if (!clean) throw new Error('查询词为空');
+  const cfg = getConfig().webSearch ?? {};
+  const provider = String(cfg.provider || 'bing').toLowerCase();
+  try {
+    return await runProvider(provider, clean);
+  } catch (error) {
+    if (provider === 'bing') throw error;
+    const reason = String(error?.message ?? error).slice(0, 160);
+    const fallback = await bingSearch(clean);
+    return { ...fallback, fallback: 'bing', fallbackNote: provider + ' 不可用（' + reason + '），已自动改用 Bing' };
+  }
 }
 
 /**
@@ -133,7 +174,11 @@ export async function webSearch(query) {
  */
 export async function deepSeekSearch(query) {
   const cfg = getConfig().webSearch?.deepseek ?? {};
-  const apiKey = String(cfg.apiKey || process.env.DEEPSEEK_API_KEY || '').trim();
+  // 主模型就是 DeepSeek 时，搜索沿用同一把 Key —— 否则「已经能聊天却不能搜索」，
+  // 设置页还要让人再填一遍同样的密钥。
+  const mainCfg = getConfig().api ?? {};
+  const mainKey = /deepseek/i.test(String(mainCfg.baseUrl || '')) ? String(mainCfg.apiKey || '').trim() : '';
+  const apiKey = String(cfg.apiKey || process.env.DEEPSEEK_API_KEY || mainKey).trim();
   if (!apiKey) throw new Error('DeepSeek 搜索需要 API Key（设置里填，或环境变量 DEEPSEEK_API_KEY）');
   const baseUrl = String(cfg.baseUrl || 'https://api.deepseek.com/responses').replace(/\/+$/, '');
   const model = String(cfg.model || 'deepseek-v4-flash');

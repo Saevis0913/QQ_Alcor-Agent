@@ -819,3 +819,40 @@ function switchTab(name) {
   if (name === 'alcor') loadAlcorPage();
   if (name === 'settings') return loadSettings();
 }
+
+/**
+ * 应用内「选一个」弹窗：替代原生 confirm 的二选一/多选一面板。
+ * options: [{ label, value, danger?, hint? }]；返回选中的 value，取消/Esc → null。
+ * 用在「清空」这种一个按钮下面挂两种清空范围的场景。
+ */
+function uiChoose(title, message, options = []) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let overlay = null;
+    let watch = null;
+    const settle = (v) => {
+      if (settled) return;
+      settled = true;
+      if (watch) clearInterval(watch);
+      try { if (overlay && overlay.isConnected) closeModelModal(overlay); } catch { /* ignore */ }
+      resolve(v);
+    };
+    try {
+      const buttons = options.map((o, i) => `<button class="btn ${o.danger ? 'btn-danger' : ''}" data-choose-value="${esc(String(o.value))}" id="ui-choose-${i}">${esc(o.label)}</button>`).join('');
+      overlay = modelModalShell({
+        head: title,
+        body: `<div class="app-alert-text">${esc(String(message ?? ''))}</div>
+               ${options.some((o) => o.hint) ? `<div class="hint" style="margin-top:8px">${options.filter((o) => o.hint).map((o) => esc(o.hint)).join('<br>')}</div>` : ''}`,
+        foot: `<button class="btn" id="ui-choose-cancel">取消</button>${buttons}`
+      });
+    } catch {
+      try { resolve(nativeWindowConfirm.call(window, message) ? (options[0]?.value ?? null) : null); } catch { resolve(null); }
+      return;
+    }
+    overlay.querySelectorAll('[data-choose-value]').forEach((btn) => {
+      btn.addEventListener('click', () => settle(btn.getAttribute('data-choose-value')));
+    });
+    overlay.querySelector('#ui-choose-cancel')?.addEventListener('click', () => settle(null));
+    watch = setInterval(() => { if (!overlay.isConnected) settle(null); }, 120);
+  });
+}

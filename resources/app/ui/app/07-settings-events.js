@@ -916,6 +916,26 @@ function bindSettingsEvents(c) {
   if (personaPick) {
     personaPick.addEventListener('click', () => openPersonaPicker());
   }
+  // 切换人设后立刻落盘：避免机器人继续按旧人设说话（系统提示词每轮现取配置，
+  // 所以只要配置写进 data/config.json，下一条消息就生效，不需要重启）。
+  $('#persona-save-refresh')?.addEventListener('click', async () => {
+    const btn = $('#persona-save-refresh');
+    if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+    try {
+      // 名字要在保存/重渲染之前取，重渲染后输入框已经是新的节点
+      const name = String($('#cfg-roletext')?.value || '').trim() ? '自定义人设' : '系统默认人设';
+      await saveConfig({ quiet: true });
+      await loadSettings();
+      if (typeof renderSettings === 'function') renderSettings();
+      if (typeof uiToast === 'function') uiToast('已保存并刷新：之后的消息按「' + name + '」回复');
+      else alert('已保存并刷新：之后的消息按「' + name + '」回复。');
+    } catch (e) {
+      alert('保存失败：' + e.message);
+    } finally {
+      const b = $('#persona-save-refresh');
+      if (b) { b.disabled = false; b.textContent = '保存并刷新'; }
+    }
+  });
   const newPersonaBtn = $('#new-persona-btn');
   if (newPersonaBtn) newPersonaBtn.addEventListener('click', () => openPersonaCreateModal());
   $('#cfg-roletext')?.addEventListener('input', () => syncPersonaButtons(false));
@@ -1107,3 +1127,69 @@ function bindSettingsEvents(c) {
     resetDataBtn.disabled = false;
   });
 }
+
+// ── 搜索服务清单与逐个测试 ──────────────────────────────────────────
+async function loadSearchServices() {
+  try {
+    const r = await api('/api/search/providers');
+    return Array.isArray(r.services) ? r.services : [];
+  } catch {
+    return [];
+  }
+}
+
+function searchRowHtml(s, current) {
+  const state = s.needsKey && !s.hasKey ? '<span class="muted">未配置 Key</span>' : '<span class="muted">已配置</span>';
+  const tag = current === s.id ? ' <b>当前</b>' : '';
+  const note = s.note ? ` <span class="muted">（${s.note}）</span>` : '';
+  return `<div class="search-service-row" data-provider="${esc(s.id)}">
+    <span>${esc(s.label)}${tag}${note}</span>
+    <span>${state}</span>
+    <button class="btn btn-small" type="button" data-test-provider="${esc(s.id)}">测试</button>
+    <span class="search-test-result muted" data-result-for="${esc(s.id)}" style="font-size:12px"></span>
+  </div>`;
+}
+
+window.renderSearchServiceList = async function renderSearchServiceList() {
+  const box = $('#search-service-list');
+  if (!box) return;
+  const data = await api('/api/search/providers').catch(() => null);
+  const services = Array.isArray(data?.services) ? data.services : [];
+  if (!services.length) { box.textContent = '（没有读到搜索服务清单）'; return; }
+  box.innerHTML = services.map((s) => searchRowHtml(s, data.current)).join('');
+};
+
+document.addEventListener('click', async (event) => {
+  const btn = event.target?.closest?.('[data-test-provider]');
+  if (!btn) return;
+  const provider = btn.getAttribute('data-test-provider');
+  const out = document.querySelector(`[data-result-for="${provider}"]`);
+  if (out) out.textContent = '测试中…';
+  btn.disabled = true;
+  try {
+    const r = await api('/api/search/test', { method: 'POST', body: JSON.stringify({ provider }) });
+    const res = r.result || {};
+    if (out) {
+      // DeepSeek 这类「原生搜索」只会回模型总结、没有来源链接，标成可用会误导，单独说明
+      out.textContent = res.ok
+        ? (res.url
+          ? `✓ 可用：${res.count} 条 · ${res.latencyMs}ms${res.sample ? ` · ${String(res.sample).slice(0, 34)}` : ''}`
+          : `⚠ 只有模型总结、没有来源链接 · ${res.latencyMs}ms`)
+        : `✗ ${String(res.error || '不可用').slice(0, 90)}`;
+      out.style.color = res.ok ? '' : 'var(--warn, #d97706)';
+    }
+  } catch (error) {
+    if (out) out.textContent = `✗ ${String(error?.message ?? error).slice(0, 90)}`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.addEventListener('click', async (event) => {
+  if (!event.target?.closest?.('#search-test-all-btn')) return;
+  const hint = $('#search-test-hint');
+  const buttons = [...document.querySelectorAll('[data-test-provider]')];
+  if (hint) hint.textContent = '正在逐个测试…';
+  for (const btn of buttons) btn.click();
+  setTimeout(() => { if (hint) hint.textContent = '测试完成（只影响显示，不改配置）'; }, 1200 + buttons.length * 900);
+});

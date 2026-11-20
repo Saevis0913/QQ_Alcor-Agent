@@ -418,8 +418,12 @@ export class MemoryStore {
         removed = true;
       }
     } catch { /* 目录不存在 = 没有记忆可删 */ }
-    // 旧版单文件（迁移前的形态）
-    try { fs.rmSync(legacyFile(this.#root(), chatKey), { force: true }); removed = true; } catch { /* ignore */ }
+    // 旧版单文件（迁移前的形态）。force:true 对不存在的文件不报错，
+    // 所以要先判断存在，否则「没删任何东西」也会报成删掉了。
+    try {
+      const legacy = legacyFile(this.#root(), chatKey);
+      if (fs.existsSync(legacy)) { fs.rmSync(legacy, { force: true }); removed = true; }
+    } catch { /* ignore */ }
     // 内存缓存同步清掉，否则同进程内 members() 还能读到旧数据
     this.#ensureChat(chatKey).clear();
     return removed;

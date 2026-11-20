@@ -734,7 +734,7 @@ function openBatchPriceModal() {
 
 function renderPersonaPicker(c) {
   const currentId = Object.entries(state.personaTemplates || {}).find(([, p]) => p.text === (c.persona?.roleText || ''))?.[0] || '';
-  const currentName = state.personaTemplates[currentId]?.name || (String(c.persona?.roleText || '').trim() ? '自定义（当前文本）' : '');
+  const currentName = state.personaTemplates[currentId]?.name || (String(c.persona?.roleText || '').trim() ? '自定义（当前文本）' : '系统默认人设');
   return `
     <div class="field-row" style="align-items:flex-end">
       <div class="field">
@@ -742,6 +742,7 @@ function renderPersonaPicker(c) {
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <input type="text" id="cfg-persona-pick" role="combobox" aria-haspopup="dialog" aria-expanded="false" class="inp persona-pick" readonly placeholder="选择已添加的人设" value="${esc(currentName)}" style="flex:1;min-width:160px;cursor:pointer" />
           <button class="btn btn-small" id="new-persona-btn">＋ 添加人设</button>
+          <button class="btn btn-small btn-primary" id="persona-save-refresh" title="立刻保存并让下一条消息使用当前人设">保存并刷新</button>
         </div>
         <span id="persona-pick-hint" class="muted" style="font-size:12px"></span>
       </div>

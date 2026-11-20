@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { getConfig, updateConfig, deepMerge as deepMergeConfig, DATA_DIR, ROOT } from './config.js';
-import { customSearch } from './web-search.js';
+import { customSearch, SEARCH_PROVIDER_META, testSearchProvider } from './web-search.js';
 import { readUpdateSource, writeUpdateSource } from './update-source.js';
 import { diagnoseQQ, scanFrameworkDirs, qqInstallRoots } from './qq-diagnosis.js';
 import { restartQQ, waitForQQ } from './qq-repair.js';
@@ -150,6 +150,15 @@ export function createRoutes(deps) {
     {
       method: 'GET', pattern: '/api/extensions/workspace',
       handler: async ({res, json}) => json(res, 200, extensionWorkspace())
+    },
+    // 桌面端重复启动兜底：让「已经在跑的那个实例」把窗口亮出来。
+    // 旧实现里新进程拿不到锁就退出或报错，用户看到的是"双击打不开"。
+    {
+      method: 'POST', pattern: '/api/window/show',
+      handler: async ({ res, json }) => {
+        try { deps.showWindow?.(); } catch (error) { log?.(['[window] 唤出窗口失败', error.message]); }
+        return json(res, 200, { ok: true });
+      }
     },
     // ── 状态 / 数据目录 / 重置 ─────────────────────────────────────────
     {
@@ -721,6 +730,41 @@ export function createRoutes(deps) {
       }
     },
 
+    // ── 搜索服务：内置服务清单与真实可用性测试 ────────────────────────
+    {
+      method: 'GET', pattern: '/api/search/providers',
+      handler: async ({ res, json }) => {
+        const cfg = getConfig().webSearch ?? {};
+        const customs = (cfg.providers || []).map((p) => ({
+          id: `custom:${p.id}`, label: String(p.name || p.baseUrl || '自定义搜索'), needsKey: p.type !== 'bing',
+          hasKey: Boolean(String(p.apiKey || '').trim())
+        }));
+        const builtins = SEARCH_PROVIDER_META.map((p) => ({
+          id: p.id, label: p.label, needsKey: p.needsKey !== false,
+          hasKey: p.keyField
+            ? Boolean(String(cfg[p.keyField]?.apiKey || '').trim())
+              // DeepSeek 搜索会复用主模型 Key（web-search.js 里的 mainKey 回退），这里要跟着显示已配置
+              || (p.id === 'deepseek' && /deepseek/i.test(String(getConfig().api?.baseUrl || '')) && Boolean(String(getConfig().api?.apiKey || '').trim()))
+            : true,
+          // DeepSeek 走 Responses API，只回模型总结、拿不到来源；标出来免得误判成「能搜网页」。
+          note: p.id === 'deepseek' ? '只返回模型总结，不含来源链接' : ''
+        }));
+        return json(res, 200, { current: String(cfg.provider || 'bing'), enabled: cfg.enabled !== false, services: [...builtins, ...customs] });
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/search/test',
+      handler: async ({ req, res, json }) => {
+        try {
+          const body = await bodyOf(req);
+          const provider = String(body.provider ?? getConfig().webSearch?.provider ?? 'bing').trim() || 'bing';
+          const result = await testSearchProvider(provider, String(body.query ?? '').trim() || '今天的新闻');
+          return json(res, 200, { ok: true, result });
+        } catch (error) {
+          return json(res, 200, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+    },
     // ── 自定义搜索提供商 ─────────────────────────────────────────────
     {
       method: 'GET', pattern: '/api/search-providers',
@@ -869,7 +913,9 @@ export function createRoutes(deps) {
           .filter((d) => getToolAvailability(d.id, skillContext).enabled)
           .map((d) => ({ id: d.id, name: d.name, description: d.description, category: d.category }));
         return json(res, 200, {
-          systemPrompt: buildSystemPrompt({ skillContext }),
+          // 预览要能反映「还没保存的人设」：把合并后的 persona 一起传进去，
+          // 否则空人设 / 新人设都预览成当前已保存的文本。
+          systemPrompt: buildSystemPrompt({ skillContext, persona: effective.persona }),
           tools
         });
       }
@@ -1256,6 +1302,37 @@ export function createRoutes(deps) {
         const removed = sessions.clearFinished();
         emit('session-end', { status: 'cleared', removed });
         return json(res, 200, { ok: true, removed });
+      }
+    },
+    {
+      // 清空「最近收件」列表（会话页「清空近期聊天」用；不影响运行中的会话）
+      method: 'POST', pattern: '/api/inbox/clear',
+      handler: async ({ res, json }) => {
+        const removed = inbox?.clear?.() ?? 0;
+        emit('inbox-update', { cleared: removed });
+        return json(res, 200, { ok: true, removed });
+      }
+    },
+    {
+      // 清空「近期记忆」（会话页清空后的可选二次清理）：默认清掉最近收件涉及的那些会话，
+      // 传 chatKeys 则只清指定的会话；删的是这些会话的印象与摘要，未列出的会话不受影响。
+      method: 'POST', pattern: '/api/memory/clear-recent',
+      handler: async ({ req, res, json }) => {
+        try {
+          const body = await bodyOf(req);
+          // 传了 chatKeys 就只按它来（哪怕是空数组）；没传才回落到最近收件涉及的那些会话。
+          // 早前用 wanted.length 判断，空数组会被当成「没传」，等于把所有会话的记忆都清了。
+          const provided = Array.isArray(body.chatKeys);
+          const wanted = provided ? body.chatKeys.map(String).filter(Boolean) : [];
+          const targets = provided ? wanted : (inbox?.listChats?.() || []).map((c) => c.chatKey || c.key || c.id).filter(Boolean);
+          let removed = 0;
+          for (const key of new Set(targets)) {
+            try { if (memory.removeChat(key)) removed += 1; } catch { /* 单个会话失败不影响其他 */ }
+          }
+          return json(res, 200, { ok: true, chats: removed, asked: targets.length });
+        } catch (error) {
+          return json(res, 400, { ok: false, error: String(error?.message ?? error) });
+        }
       }
     },
     {

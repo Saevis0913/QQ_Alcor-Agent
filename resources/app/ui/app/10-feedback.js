@@ -863,18 +863,46 @@ $('#quote-btn')?.addEventListener('click', () => {
 $('#quote-confirm-btn')?.addEventListener('click', () => openQuoteConfirmModal());
 
 // 会话列表「清空」：清空全部已结束的会话记录（保留运行中/等待中的）
+// 会话列表「清空」：先选清哪一块（近期聊天 / 近期记忆），再各自确认。
+// 清完聊天后会追问是否顺手清掉这些会话的记忆 —— 用户也可以先不清，稍后再从
+// 同一个「清空」入口里的「清空近期记忆」单独处理。
 $('#session-clear-btn')?.addEventListener('click', async () => {
+  const inboxKeys = [...new Set((state.inbox || []).map((c) => c.chatKey).filter(Boolean))];
   const total = (state.sessions || []).length;
   const running = (state.sessions || []).filter((s) => s.status === 'running' || s.status === 'waiting').length;
-  if (!(await uiConfirm(`确定清空全部已结束的会话记录？\n\n共 ${total} 条，其中 ${running} 条运行中/等待中会保留。\n此操作不可恢复（不影响用量统计的历史数据）。`))) return;
+  const scope = await uiChoose('清空', '要清空哪一部分？两件事可以分开做。', [
+    { label: '清空近期聊天', value: 'chats', danger: true, hint: `会话记录 ${total} 条（运行中/等待中 ${running} 条保留）+ 最近收件 ${inboxKeys.length} 个聊天` },
+    { label: '清空近期记忆', value: 'memory', danger: true, hint: `这些会话里记下的群友印象与摘要（${inboxKeys.length} 个聊天）` }
+  ]);
+  if (!scope) return;
+
+  if (scope === 'chats') {
+    if (!(await uiConfirm(`确定清空近期聊天？\n\n会话记录 ${total} 条（其中 ${running} 条运行中/等待中会保留），\n最近收件 ${inboxKeys.length} 个聊天全部清掉。\n此操作不可恢复（不影响用量统计的历史数据）。`))) return;
+    try {
+      await api('/api/sessions/clear-finished', { method: 'POST' });
+      await api('/api/inbox/clear', { method: 'POST' });
+      state.currentSessionId = null;
+      const detail = $('#session-detail');
+      if (detail) detail.innerHTML = '<div class="empty-hint">← 选择左侧会话查看完整过程</div>';
+      await loadSessions({ quiet: true });
+      renderSessionList();
+      const alsoMemory = await uiConfirm('最近聊天已清空。\n\n是否同时清空这些会话的近期记忆（群友印象与摘要）？\n选「取消」就保留，之后还能在「清空 → 清空近期记忆」里单独清。', { title: '🧠 是否一起清记忆', okText: '一起清掉', cancelText: '先保留' });
+      if (alsoMemory) {
+        const r = await api('/api/memory/clear-recent', { method: 'POST', body: JSON.stringify({ chatKeys: inboxKeys }) });
+        alert(`近期记忆已清空：${r.chats ?? 0} 个会话。`);
+      }
+    } catch (e) {
+      alert(`清空失败：${e.message}`);
+    }
+    return;
+  }
+
+  if (!(await uiConfirm(`确定清空这 ${inboxKeys.length} 个聊天的近期记忆？\n\n它们记下的群友印象与摘要都会被删除，此操作不可撤销。\n（没有列在这里的会话记忆不受影响）`))) return;
   try {
-    const r = await api('/api/sessions/clear-finished', { method: 'POST' });
-    state.currentSessionId = null;
-    $('#session-detail').innerHTML = '<div class="empty-hint">← 选择左侧会话查看完整过程</div>';
-    await loadSessions({ quiet: true });
-    renderSessionList();
+    const r = await api('/api/memory/clear-recent', { method: 'POST', body: JSON.stringify({ chatKeys: inboxKeys }) });
+    alert(`近期记忆已清空：${r.chats ?? 0} 个会话。`);
   } catch (e) {
-    alert(`清空失败：${e.message}`);
+    alert(`清空记忆失败：${e.message}`);
   }
 });
 
