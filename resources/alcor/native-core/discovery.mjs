@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { findQQBuildProfile } from './qq-profiles.mjs';
+import { findQQBuildProfile, matchQQFamily } from './qq-profiles.mjs';
 const run=promisify(execFile);
 /* 其他 QQ 框架（LiteLoader 插件宿主、旧 snowluma、napcat 之类）注入的模块会一直驻留到 QQ 重启，
    而它们占用的正是原生接入要读的服务对象，所以扫描阶段就要把它们和 Alcor 自己的宿主分出来。 */
@@ -32,14 +32,17 @@ ConvertTo-Json -InputObject $rows -Depth 3 -Compress
 `;
 const bounded=(list,limit)=>Array.isArray(list)?list.filter(name=>typeof name==='string'&&moduleNamePattern.test(name)).slice(0,limit):[];
 export function classifyQQProcess(row){
-  const profile=typeof row.path==='string'&&/(?:^|[\\/])QQ\.exe$/i.test(row.path)?findQQBuildProfile(row.moduleName,row.sha256):null;
+  const isQQ=typeof row.path==='string'&&/(?:^|[\\/])QQ\.exe$/i.test(row.path);
+  const profile=isQQ?findQQBuildProfile(row.moduleName,row.sha256):null;
+  const family=!profile&&isQQ?matchQQFamily(row.moduleName,row.version):null;
   const modules=bounded(row.modules,512);
   const alcorHostLoaded=modules.length?modules.some(name=>name.toLowerCase().includes(hostModule)):row.alcorHostLoaded===true;
   const foreignModules=modules.length?modules.filter(isForeignQQModule).slice(0,8):bounded(row.foreignModules,8);
   const {modules:_inventory,...rest}=row;
   return {...rest,foreignModules,alcorHostLoaded,supported:!!profile,version:profile?.version||row.version,
-    verification:profile?.verification||null,architecture:profile?.architecture||null,
-    reason:profile?(alcorHostLoaded?'ALCOR_HOST_PRESENT':foreignModules.length?'FOREIGN_MODULES_PRESENT':'IDENTITY_REQUIRES_CONNECTION'):row.reason||'UNSUPPORTED_BUILD'};
+    verification:profile?.verification||family?.verification||null,architecture:profile?.architecture||family?.architecture||null,
+    family:family?.version||null,
+    reason:profile?(alcorHostLoaded?'ALCOR_HOST_PRESENT':foreignModules.length?'FOREIGN_MODULES_PRESENT':'IDENTITY_REQUIRES_CONNECTION'):(family?'FAMILY_UNVERIFIED':row.reason||'UNSUPPORTED_BUILD')};
 }
 /** Inventory only: module identity is not proof of account login or server reachability. */
 export async function discoverQQ(){

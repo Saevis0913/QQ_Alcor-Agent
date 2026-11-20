@@ -46,7 +46,8 @@ function pickCandidate(processRows) {
 // 未登记的构建：只要确实是 QQ.exe、没有外来模块、宿主没在里面，就允许用户在知情后试一次。
 // 99% 的兼容性靠的是「能试 + 失败可恢复」，而不是把识别名单无限拉长。
 export function pickRelaxedCandidate(processRows) {
-  const clean = processRows.filter((row) => row && !row.supported && row.reason === 'UNSUPPORTED_BUILD'
+  const clean = processRows.filter((row) => row && !row.supported
+    && (row.reason === 'UNSUPPORTED_BUILD' || row.reason === 'FAMILY_UNVERIFIED')
     && !row.alcorHostLoaded && !(row.foreignModules?.length));
   return clean.sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')))[0] || null;
 }
@@ -152,8 +153,12 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
     const versions = [...new Set(rows.map((row) => row.version || '未知版本'))].join('、');
     const relaxed = pickRelaxedCandidate(rows);
     if (relaxed) {
-      return { ...base, code: 'QQ_BUILD_UNLISTED', title: `QQ 版本 ${versions} 未登记，可以试一次`,
-        detail: `这一版 QQ（PID ${relaxed.pid}）的 wrapper.node 不在随包名单里（已适配 ${SUPPORTED_QQ_VERSIONS.join(' / ')}），所以没有「已验证」保证。`,
+      const family = relaxed.verification === 'family';
+      return { ...base, code: 'QQ_BUILD_UNLISTED',
+        title: family ? `QQ ${relaxed.version || versions} 同系列未逐字节验证，可以试一次` : `QQ 版本 ${versions} 未登记，可以试一次`,
+        detail: family
+          ? `这一版 QQ（PID ${relaxed.pid}）属于 ${relaxed.family || relaxed.version} 这一代，随包只对 ${SUPPORTED_QQ_VERSIONS.join(' / ')} 做过逐字节验证，所以没有「已验证」保证。`
+          : `这一版 QQ（PID ${relaxed.pid}）的 wrapper.node 不在随包名单里（已适配 ${SUPPORTED_QQ_VERSIONS.join(' / ')}），所以没有「已验证」保证。`,
         hint: '点「仍然尝试注入」会用兼容模式试一次：注入失败会自动重启 QQ 恢复原状，不会把 QQ 弄坏。',
         candidate: relaxed, relaxed: true, unreadable: unreadable.length };
     }

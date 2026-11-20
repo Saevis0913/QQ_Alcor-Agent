@@ -24,6 +24,18 @@ export function findQQBuildProfile(moduleName,sha256){
   if(typeof moduleName!=='string'||typeof sha256!=='string'||!/^([a-f0-9]{64})$/i.test(sha256))return null;
   return QQ_BUILD_PROFILES.find(p=>p.module===moduleName.toLowerCase()&&p.sha256===sha256.toLowerCase())||null;
 }
+// 同系列放宽：没有逐字节验证过的构建，只要落在 9.9.33–9.9.45 这一段，就按「同系列」对待——
+// 允许用户在知情后试一次注入，失败会自动重启 QQ 恢复原状；仍然不进入 supported 白名单。
+const FAMILY_MIN=33,FAMILY_MAX=45;
+export function matchQQFamily(moduleName,version){
+  if(typeof moduleName!=='string'||moduleName.toLowerCase()!=='wrapper.node')return null;
+  if(typeof version!=='string')return null;
+  const match=/^9\.9\.(\d{2})-\d+$/.exec(version.trim());
+  if(!match)return null;
+  const minor=Number(match[1]);
+  if(!Number.isInteger(minor)||minor<FAMILY_MIN||minor>FAMILY_MAX)return null;
+  return {version:version.trim(),module:'wrapper.node',architecture:'x64',verification:'family',sha256:null,rvas:null};
+}
 export function renderQQProfilesHeader(entries=QQ_BUILD_PROFILES){
   const fields=Object.keys(QQ_BUILD_PROFILES[0].rvas),seen=new Set();
   if(!Array.isArray(entries)||!entries.length)throw Error('INVALID_QQ_PROFILES');

@@ -63,7 +63,7 @@ export class NativeController {
       if(!row.supported){
         // 兼容模式：只有用户明确同意、而且只是「构建未适配」（进程本身可读）时才继续。
         // 其他原因（外来模块、宿主已在、进程读不到）继续拒绝，那些试了只会更糟。
-        const relaxable=allowUnverified===true&&row.reason==='UNSUPPORTED_BUILD'&&typeof row.path==='string'&&/[\\/]QQ\.exe$/i.test(row.path);
+        const relaxable=allowUnverified===true&&(row.reason==='UNSUPPORTED_BUILD'||row.reason==='FAMILY_UNVERIFIED')&&typeof row.path==='string'&&/[\\/]QQ\.exe$/i.test(row.path);
         if(!relaxable)throw new Error('UNSUPPORTED_QQ');
         this.lastError='UNVERIFIED_BUILD_ATTEMPT';
       this.lastUnverified = { version: row.version || '', sha256: row.sha256 || '', at: Date.now() };
