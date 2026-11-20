@@ -44,7 +44,16 @@ export function classifyQQProcess(row){
 /** Inventory only: module identity is not proof of account login or server reachability. */
 export async function discoverQQ(){
   if(process.platform!=='win32') return [];
-  const {stdout}=await run('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:15000,maxBuffer:262144});
+  const encoded=Buffer.from(script,'utf16le').toString('base64');
+  const read=async()=>{
+    const {stdout}=await run('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',encoded],{windowsHide:true,timeout:25000,maxBuffer:262144});
+    return stdout;
+  };
+  // 慢机器上首次拉起 PowerShell（杀软扫描、磁盘冷启动）容易超时；重试一次比直接报
+  // PROCESS_INSPECTION_UNAVAILABLE 更接近真实情况，且仍然是有界等待。
+  let stdout;
+  try{ stdout=await read(); }
+  catch(error){ if(error?.killed!==true)throw error; await new Promise(r=>setTimeout(r,800)); stdout=await read(); }
   const rows=JSON.parse(stdout.replace(/^\uFEFF/,''));
   if(!Array.isArray(rows)||rows.length>128)throw new Error('PROCESS_INVENTORY_INVALID');
   return rows.map(classifyQQProcess);

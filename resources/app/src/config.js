@@ -383,6 +383,7 @@ export const DEFAULT_CONFIG = {
   },
   ui: {
     alcorAccessGuideSeen: false, // Only a boolean; the access token stays in the selected core config.
+    injectionCheckSeen: false,  // 首启一次性的「进程注入可行性检测」提示
     // 主题：'dark' | 'light' | 'auto'（auto 按本机时间及下方时间表切换）。
     // localStorage 用于首帧，服务配置用于刷新后及同一实例的其他窗口。
     theme: 'auto',

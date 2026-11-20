@@ -35,7 +35,7 @@ export async function initializeInstall({installRoot,dataDir=path.join(installRo
     api:{baseUrl:'',model:'',apiKey:''},allow:{groups:[],private:[]},allowAllWhenEmpty:false,
     persona:{botName:'Alcor',roleText:''},customPersonas:[],personaByChat:{},
     store:{replyPolicy:{mode:'all',probability:10},unifiedTier:true},extensions:{hotReload:false},
-    ui:{theme:'auto',installGuideSeen:false,alcorAccessGuideSeen:true}};
+    ui:{theme:'auto',installGuideSeen:false,alcorAccessGuideSeen:true,injectionCheckSeen:false}};
   let template='';
   try{template=await fs.readFile(path.join(installRoot,'resources/app/public-defaults.json'),'utf8');}catch{}
   const config=mergePublicDefaults(baseConfig,template);
@@ -47,7 +47,7 @@ export async function initializeInstall({installRoot,dataDir=path.join(installRo
   config.allow={groups:[],private:[]};config.deny={groups:[],private:[]};config.allowAllWhenEmpty=false;
   config.privatePolicy={...config.privatePolicy,adminQQs:[],specialFriendQQs:[]};
   config.blocklist={};config.globalBlocklist=[];config.communityExemptions=[];
-  config.ui={...config.ui,installGuideSeen:false,alcorAccessGuideSeen:false};
+  config.ui={...config.ui,installGuideSeen:false,alcorAccessGuideSeen:false,injectionCheckSeen:false};
   await fs.writeFile(configFile,JSON.stringify(config,null,2)+'\n',{encoding:'utf8',flag:'wx'});
   return {created:true};
 }

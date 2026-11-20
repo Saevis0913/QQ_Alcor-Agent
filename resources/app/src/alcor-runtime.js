@@ -26,12 +26,23 @@ export function createAlcorRuntime({ getSettings, dataDir, appRoot, nodeExecutab
     const line = { at: Date.now(), stream, text };
     logs.push(line); if (logs.length > 200) logs.shift(); onLog(line);
   };
+  // 冷启动/杀软扫描时第一次连本地核心常是瞬时超时；重试一次能把「真的没起来」
+  // 和「还没起来」分开，避免界面上闪一下「无法响应」。ECONNREFUSED 不重试。
+  async function fetchWithRetry(url, init) {
+    try { return await fetch(url, init); }
+    catch (error) {
+      const code = error?.cause?.code;
+      if (code === 'ECONNREFUSED') throw error;
+      await delay(350);
+      return await fetch(url, init);
+    }
+  }
   async function inspect() {
     let config;
     try { config = connection(); }
     catch { return { ...owned(), running: false, backendReady: false, code: 'ALCOR_CONFIG_INVALID', error: 'Alcor 本地配置不可用', occupied: false }; }
     try {
-      const res = await fetch(config.httpUrl + '/health', { headers: { authorization: `Bearer ${config.accessToken}` }, signal: AbortSignal.timeout(1200) });
+      const res = await fetchWithRetry(config.httpUrl + '/health', { headers: { authorization: `Bearer ${config.accessToken}` }, signal: AbortSignal.timeout(1500) });
       if (res.status === 401) return { ...owned(), running: false, backendReady: false, occupied: true, code: 'ALCOR_AUTH_FAILED', error: 'Alcor 访问令牌不匹配，请核对所选配置' };
       const health = await res.json();
       if (!res.ok || health.name !== 'Alcor' || health.listening !== true) return { ...owned(), running: false, backendReady: false, occupied: true, code: 'ALCOR_IDENTITY_MISMATCH', error: '指定端口不是可验证的 Alcor 服务' };

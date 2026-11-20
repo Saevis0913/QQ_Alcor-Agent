@@ -52,7 +52,14 @@ $$('.tab').forEach((tab) => {
     try { setLoadingStatus(`启动异常：${err?.message || err}`); } catch { /* ignore */ }
   } finally {
     try { hideLoading(); } catch { /* ignore */ }
-    api('/api/config').then(c => c.ui?.installGuideSeen === false ? showInstallationGuide({firstRun:true}) : showAlcorAccessGuide()).catch(() => {});
+    api('/api/config').then(c => {
+      if (c.ui?.installGuideSeen === false) return showInstallationGuide({ firstRun: true });
+      showAlcorAccessGuide();
+      // 首启引导一次性提示：进程注入可行性检测（用户点「稍后」就记下来，不再打扰）
+      if (c.ui?.injectionCheckSeen === false && typeof showInjectionCheck === 'function') {
+        setTimeout(() => { try { showInjectionCheck({ firstRun: true }); } catch { /* 引导失败不挡启动 */ } }, 1200);
+      }
+    }).catch(() => {});
   }
 })();
 

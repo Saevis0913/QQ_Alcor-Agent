@@ -9,7 +9,7 @@ const run=promisify(execFile);
 const loaderPath=fileURLToPath(new URL('../artifacts/native/qq-host-loader.exe',import.meta.url));
 async function load(pid,nonce,mode,startedAt){
   const args=[String(pid),String(process.pid),nonce,mode];if(startedAt)args.push(startedAt);
-  const r=await run(loaderPath,args,{windowsHide:true,timeout:55000,maxBuffer:8192});
+  const r=await run(loaderPath,args,{windowsHide:true,timeout:75000,maxBuffer:8192});
   return JSON.parse(r.stdout);
 }
 /* 宿主刚装载时服务对象可能还在初始化，identity 会瞬时拿不到账号；

@@ -17,6 +17,7 @@ import { getConfig, updateConfig, deepMerge as deepMergeConfig, DATA_DIR, ROOT }
 import { customSearch, SEARCH_PROVIDER_META, testSearchProvider } from './web-search.js';
 import { readUpdateSource, writeUpdateSource } from './update-source.js';
 import { diagnoseQQ, scanFrameworkDirs, qqInstallRoots } from './qq-diagnosis.js';
+import { collectInjectionCheck, runInjectionFix, formatInjectionReport } from './injection-doctor.js';
 import { probeQQCompat } from './qq-compat.js';
 import { restartQQ, waitForQQ } from './qq-repair.js';
 import { listModels, chatCompletion, resolveApiKey, estimateCost, cacheHitRate } from './llm.js';
@@ -351,6 +352,33 @@ export function createRoutes(deps) {
     {
       method: 'GET', pattern: '/api/alcor/logs',
       handler: async ({ res, json }) => json(res, 200, { logs: alcorLogs.slice(-200) })
+    },
+    {
+      // 首启「进程注入可行性检测」：只读探测 + 明确的自动修复动作，不改任何既有功能语义。
+      method: 'GET', pattern: '/api/injection-check',
+      handler: async ({ res, json }) => {
+        const installRoot = path.resolve(ROOT, '../..');
+        let processes = [];
+        try {
+          if (typeof deps.alcorManage === 'function') {
+            const result = await deps.alcorManage('processes');
+            processes = Array.isArray(result.body?.processes) ? result.body.processes : [];
+          }
+        } catch { /* 核心没跑也能查本机条件 */ }
+        const result = await collectInjectionCheck({ installRoot, dataDir: DATA_DIR, processRows: processes });
+        return json(res, 200, { status: 'ok', data: { ...result, text: formatInjectionReport(result) } });
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/injection-check/fix',
+      handler: async ({ req, res, json, readJson }) => {
+        const body = await readJson(req);
+        const id = String(body?.id || '');
+        const installRoot = path.resolve(ROOT, '../..');
+        const outcome = await runInjectionFix(id, { dataDir: DATA_DIR, installRoot });
+        return json(res, outcome.ok ? 200 : 502, { status: outcome.ok ? 'ok' : 'failed', data: outcome,
+          ...(outcome.ok ? {} : { wording: 'INJECTION_FIX_FAILED' }) });
+      }
     },
     {
       method: 'GET', pattern: '/api/qq/diagnosis',

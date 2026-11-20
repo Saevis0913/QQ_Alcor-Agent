@@ -2863,3 +2863,21 @@ html[data-theme] #search-test-all-btn { flex: 0 0 auto; white-space: nowrap; min
 /* 环境事实：权限/会话/安全策略/注入器，一行给全，避免「查不出原因」。 */
 html[data-theme] .qq-compat { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: var(--muted, #8b93a7); word-break: break-word; }
 html[data-theme] .qq-warnline { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: var(--warn, #d9a441); }
+
+/* ── 三十一、进程注入可行性检测（首启） ───────────────────────────── */
+html[data-theme] .injection-overlay .model-modal { width: min(720px, calc(100vw - 48px)); }
+html[data-theme] .inject-lead { margin: 0 0 6px; font-size: 15px; color: var(--tx); }
+html[data-theme] .inject-summary { margin: 10px 0 8px; font-size: 12.5px; color: var(--tx-2); }
+html[data-theme] .inject-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+html[data-theme] .inject-item { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 10px; align-items: start;
+  padding: 9px 11px; border: 1px solid var(--bd); border-radius: 9px; background: var(--bg-2); }
+html[data-theme] .inject-mark { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--tx-3); }
+html[data-theme] .inject-ok .inject-mark { background: #3fbf7f; }
+html[data-theme] .inject-fixable .inject-mark { background: #d9a13b; }
+html[data-theme] .inject-manual .inject-mark { background: #d9694b; }
+html[data-theme] .inject-optional .inject-mark { background: #6f8bb5; }
+html[data-theme] .inject-line { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+html[data-theme] .inject-line strong { font-weight: 600; font-size: 13px; }
+html[data-theme] .inject-status { font-size: 11.5px; color: var(--tx-3); }
+html[data-theme] .inject-detail { margin: 3px 0 0; font-size: 12.5px; color: var(--tx-2); line-height: 1.55; word-break: break-word; }
+html[data-theme] .inject-fail { color: #d9694b; font-size: 13px; margin: 0 0 6px; }
