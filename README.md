@@ -70,28 +70,44 @@ npm start
 
 ## 控制台显示「无法连接 / 被占用」怎么办
 
-程序不自带任何第三方框架（NapCat、SnowLuma、LiteLoader 都不在包里，见 `resources/alcor/native-core/discovery.mjs` 只做识别）。遇到连不上，双击安装目录里的：
+程序不自带任何第三方框架（NapCat、SnowLuma、LiteLoader 都不在包里，见 `resources/alcor/native-core/discovery.mjs` 只做识别）。遇到连不上：
+
+**先点 设置 → 连接与桌面 → QQ 接入 →「一键检测并连接」**。它会自己启动核心、拉起 QQ、清理残留宿主、重试注入，并把每一步写在卡片上；未登记的 QQ 版本可以点「仍然尝试注入」试一次（失败会自动重启 QQ 恢复原状）。
+
+要看完整报告，双击安装目录里的：
 
 `控制台无法连接，显示被占用点这个，对照最后一行判定码.cmd`
 
-它只读地扫一遍本机，**最后一行判定码**按下面的表处理：
+它只读地扫一遍本机（系统版本、QQ 进程、注入器、宿主 DLL、运行库、权限、会话、安全策略、上次失败阶段），**最后一行是判定码**，按下面的表处理。完整报告同时落盘在 `data/qq-doctor-<时间戳>.log`。
 
 | 判定码 | 含义 | 处理 |
 | --- | --- | --- |
-| `UNSUPPORTED_BUILD` | QQ 版本不支持 | 原生接入按 `wrapper.node` 的 SHA-256 精确匹配，当前只适配 `9.9.36-53644` 与 `9.9.37-54395`。换回这两个版本之一；QQ 自动更新后需要等新版本适配 |
-| `HOST_PRESENT` | 上次注入的宿主还驻留在 QQ 里 | 退出 QQ 重新登录，或点设置页的「重启 QQ 后重试」 |
-| `FOREIGN_MODULES` | 有其他框架占用 | 同一个号只能接入一个框架；退出 LiteLoaderQQNT / NapCat / LLOneBot / SnowLuma 等，报告会列出具体模块名 |
-| `CORE_OFFLINE` | Alcor 核心没在运行 | 先启动 Alcor 核心（侧栏「Alcor」页可启动），再回到设置页点「连接 QQ」 |
-| `NO_QQ_RUNNING` | 没检测到 QQ 进程 | 先登录 QQ |
-| `RECEIVE_NOT_READY` | 宿主连上了，账号或消息通道还没确认 | 在 QQ 里确认已登录，点「重新扫描」；一直不恢复就重启 QQ 再连 |
-| `READY_TO_CONNECT` | 一切就绪 | 点设置 → 连接与桌面 → 「连接 QQ」 |
-| `ALREADY_CONNECTED` | 已连接 | 无需处理 |
+| `ALREADY_CONNECTED` | 已连上 | 无需处理 |
+| `READY_TO_CONNECT` | 一切就绪 | 点「连接 QQ」或「一键检测并连接」 |
+| `RECEIVE_NOT_READY` | 宿主连上了，账号或消息通道还没确认 | 确认 QQ 已登录后点「重新扫描」；一直不恢复就重启 QQ 再连 |
+| `CORE_OFFLINE` | Alcor 核心没在运行 | 侧栏「Alcor」页启动核心，再回来连接 |
+| `NO_QQ_RUNNING` | 没检测到 QQ 进程 | 先登录 QQ；一键连接会自己帮你拉起 |
+| `UNSUPPORTED_BUILD` | QQ 版本未适配，且没有可直接尝试的进程 | 换回已适配版本（`9.9.36-53644` / `9.9.37-54395`），或以普通权限启动 QQ 后再扫描 |
+| `QQ_BUILD_UNLISTED` | QQ 构建未登记，但可以试 | 点「仍然尝试注入」：兼容模式试一次，失败会自动重启 QQ 恢复原状 |
+| `HOST_PRESENT` | 上次注入的宿主还驻留在 QQ 里 | 等半分钟让它自己接回，或点「重启 QQ 后重试」 |
+| `HOST_ALREADY_PRESENT` | 注入时发现模块已在 QQ 里 | 一键连接会先关干净 QQ 再重开，然后重试 |
+| `FOREIGN_MODULES` | 有其他框架占用 | 一个号只能接一个框架；退出 LiteLoaderQQNT / NapCat / LLOneBot / SnowLuma 等，报告会列出模块名 |
+| `ELEVATION_MISMATCH` | QQ 与 Alcor 权限不一致 | 两边用同一种权限（都不提权最省事），或点「以管理员重启」 |
+| `SESSION_MISMATCH` | QQ 与 Alcor 不在同一个 Windows 会话 | 在同一登录会话里打开两者（别一个远程桌面、一个本机控制台） |
+| `ARCH_MISMATCH` | QQ 不是 64 位 | 换装官方 64 位 QQ（安装包默认 x64） |
+| `HOST_RUNTIME_BROKEN` | 注入器或宿主 DLL 缺失/损坏 | 重新安装；或装 VC++ 运行库后重启 Alcor |
+| `HOST_TARGET_DENIED` | 加载器拿不到 QQ 进程操作权 | 多为权限/受保护进程；按 `ELEVATION_MISMATCH` 处理后再试 |
+| `HOST_LOAD_BLOCKED` | alcor-host.dll 在 QQ 里加载失败 | 安全软件加白名单（Alcor 目录与 QQ 目录）；关闭「内核隔离 · 内存完整性」后重启；确认是 64 位 QQ |
+| `HOST_ENTRY_FAILED` | DLL 进去了但没起来 | 重启 QQ 再试；仍失败请把 `data/qq-doctor-*.log` 发回来 |
+| `INJECTION_BLOCKED` | 环境主动拦截注入 | 检查 HVCI、智能应用控制、EDR；按提示逐项放开后重启 |
+| `PROCESS_UNREADABLE` | 读不到 QQ 进程信息 | 用管理员身份运行一次排查程序；或检查安全软件是否拦了进程查询 |
 
-同一份判定也显示在 **设置 → 连接与桌面 → QQ 接入** 卡片上，底栏状态会写成「QQ 版本未适配」「QQ 可以连接」这类短语。报告同时落盘在 `data/qq-doctor-<时间戳>.log`。
+同一份判定也显示在 **设置 → 连接与桌面 → QQ 接入** 卡片上，底栏状态会写成「QQ 版本未适配」「QQ 可以连接」这类短语。
+
 
 ## 版本
 
-当前源码快照对应 **Alcor Agent 0.2.3**（正式版安装包 `Alcor-Agent-Setup-0.2.3-x64.exe`）。
+当前源码快照对应 **Alcor Agent 0.2.9**（最近发布的安装包是 `v0.2.9` 的 `Alcor-Agent-Setup-0.2.9-x64.exe`；本文档里的排查程序与兼容性改动尚未打包成新版本）。
 
 本版要点：图片与表情共用一条转发路径（可按消息转发、随时收藏）、已收表情单独发送、API 认证失败与额度不足的明确错误码、设置页五栏分类与账本式排版、右侧抽屉式弹窗、思考强度六挡滑杆（轻度/中/高/极高/max/Ultra）。
 
