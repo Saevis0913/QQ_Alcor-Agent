@@ -103,10 +103,11 @@ export async function fetchManifest({ dir = DATA_DIR, timeoutMs = SOURCE_TIMEOUT
   const sources = manifestSources({ dir });
   if (!sources.length) throw Object.assign(Error('UPDATE_SOURCE_NOT_CONFIGURED'), { code: 'UPDATE_SOURCE_NOT_CONFIGURED' });
   const errors = [];
-  const attempts = sources.map(async (source) => {
+  const round = async (source) => {
     try {
+      const budget = errors.length >= sources.length ? timeoutMs * 2 : timeoutMs;
       const { buffer } = await safeFetchBinary(source, MAX_MANIFEST_BYTES, {
-        httpsOnly: true, publicOnly: true, timeoutMs, maxRedirects: 3
+        httpsOnly: true, publicOnly: true, timeoutMs: budget, maxRedirects: 3
       });
       if (!buffer?.length) throw Error('UPDATE_MANIFEST_INVALID');
       return normalizeManifest(JSON.parse(buffer.toString('utf8')), source);
@@ -114,15 +115,19 @@ export async function fetchManifest({ dir = DATA_DIR, timeoutMs = SOURCE_TIMEOUT
       errors.push(`${new URL(source).hostname}: ${error?.code || error?.message || error}`);
       throw error;
     }
-  });
-  try {
-    return await Promise.any(attempts);
-  } catch {
-    throw Object.assign(Error('UPDATE_ALL_SOURCES_FAILED'), {
-      code: 'UPDATE_ALL_SOURCES_FAILED',
-      detail: errors.slice(0, 5).join(' | ')
-    });
+  };
+  // 两轮：第一轮限时竞速；全挂时再给慢源一次机会（弱网下第一次常常只是握手慢）。
+  for (let pass = 0; pass < 2; pass++) {
+    try {
+      return await Promise.any(sources.map((source) => round(source)));
+    } catch {
+      if (pass === 0) await new Promise((resolve) => setTimeout(resolve, 400));
+    }
   }
+  throw Object.assign(Error('UPDATE_ALL_SOURCES_FAILED'), {
+    code: 'UPDATE_ALL_SOURCES_FAILED',
+    detail: errors.slice(0, 6).join(' | ')
+  });
 }
 
 /** 语义化版本比较：a>b 返回 1，相等 0，小于 -1。 */

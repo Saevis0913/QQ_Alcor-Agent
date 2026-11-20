@@ -61,8 +61,34 @@ const DOWNLOAD_HOSTS = new Set([
   'github.com',
   'objects.githubusercontent.com',
   'release-assets.githubusercontent.com',
-  'github-releases.githubusercontent.com'
+  'github-releases.githubusercontent.com',
+  'ghfast.top',
+  'gh-proxy.com',
+  'ghproxy.net'
 ]);
+
+// 公共 GitHub 代理：只作为「多几条下载通路」，最终仍按清单里的 sha256 校验，
+// 所以代理即使想塞私货也过不了校验。顺序按实测速度排（地区不同会有差异）。
+const ASSET_MIRRORS = [
+  (url) => 'https://ghfast.top/' + url,
+  (url) => 'https://gh-proxy.com/' + url,
+  (url) => 'https://ghproxy.net/' + url
+];
+
+function expandMirrors(urls) {
+  const out = [];
+  const push = (value) => { if (value && !out.includes(value)) out.push(value); };
+  for (const raw of urls) {
+    push(raw);
+    try {
+      const url = new URL(raw);
+      if (url.protocol === 'https:' && url.hostname === 'github.com') {
+        for (const make of ASSET_MIRRORS) push(make(raw));
+      }
+    } catch { /* 坏链接交给上一层报错 */ }
+  }
+  return out;
+}
 
 let curlChecked = null;
 
@@ -92,8 +118,9 @@ function curlDownload(curl, url, destPath, { maxBytes, timeoutMs }) {
   return new Promise((resolve, reject) => {
     const args = [
       '-L', '--fail', '--silent', '--show-error',
-      '--retry', '5', '--retry-delay', '2', '--retry-all-errors',
+      '--retry', '0',
       '--connect-timeout', '20',
+      '--speed-limit', '262144', '--speed-time', '20',
       '--max-time', String(Math.max(60, Math.round(timeoutMs / 1000))),
       '--continue-at', '-',
       '-o', destPath, url
@@ -333,7 +360,7 @@ export async function downloadUpdate() {
   if (!/^[a-f0-9]{64}$/.test(expected)) expected = await expectedHash(urls[0], filename).catch(() => '');
   if (!/^[a-f0-9]{64}$/.test(expected)) throw Object.assign(Error('UPDATE_HASH_UNAVAILABLE'), { code: 'UPDATE_HASH_UNAVAILABLE' });
   let lastError = null;
-  for (const url of urls) {
+  for (const url of expandMirrors(urls)) {
     try {
       const got = await downloadToFile(url, part, {
         maxBytes: MAX_INSTALLER_BYTES,
@@ -383,6 +410,22 @@ const REPAIR_HOSTS = new Set([
   'github.io'
 ]);
 
+/** 只接受 https、已知下载主机、且指向 .exe 的链接；其余一律丢弃。 */
+export function filterRepairUrls(values) {
+  const out = [];
+  for (const value of [].concat(values || [])) {
+    try {
+      const url = new URL(String(value || ''));
+      if (url.protocol !== 'https:') continue;
+      if (url.username || url.password) continue;
+      if (!REPAIR_HOSTS.has(url.hostname)) continue;
+      if (!/\.exe$/i.test(url.pathname)) continue;
+      if (!out.includes(url.href)) out.push(url.href);
+    } catch { /* 坏链接跳过 */ }
+  }
+  return out.slice(0, 5);
+}
+
 async function aiCandidateUrls() {
   const cfg = getConfig();
   const prompt = [
@@ -409,17 +452,7 @@ async function aiCandidateUrls() {
   if (!match) throw Object.assign(Error('UPDATE_AI_NO_PLAN'), { code: 'UPDATE_AI_NO_PLAN', detail: text.slice(0, 200) });
   let parsed;
   try { parsed = JSON.parse(match[0]); } catch { throw Object.assign(Error('UPDATE_AI_NO_PLAN'), { code: 'UPDATE_AI_NO_PLAN', detail: text.slice(0, 200) }); }
-  const urls = [].concat(parsed.urls || []).map((value) => String(value || '')).filter(Boolean).slice(0, 5);
-  const safe = [];
-  for (const value of urls) {
-    try {
-      const url = new URL(value);
-      if (url.protocol !== 'https:') continue;
-      if (!REPAIR_HOSTS.has(url.hostname)) continue;
-      if (!/\.exe$/i.test(url.pathname)) continue;
-      safe.push(url.href);
-    } catch { /* 跳过坏链接 */ }
-  }
+  const safe = filterRepairUrls(parsed.urls);
   if (!safe.length) throw Object.assign(Error('UPDATE_AI_NO_PLAN'), { code: 'UPDATE_AI_NO_PLAN', detail: '模型给出的链接都不在允许的下载主机里' });
   return { urls: safe, note: String(parsed.note || '').slice(0, 200) };
 }
@@ -448,7 +481,7 @@ export async function repairUpdate() {
   const dest = path.join(UPDATE_DIR, filename);
   const part = dest + '.part';
   let lastError = null;
-  for (const url of plan.urls) {
+  for (const url of expandMirrors(plan.urls)) {
     try {
       const got = await downloadToFile(url, part, {
         maxBytes: MAX_INSTALLER_BYTES,

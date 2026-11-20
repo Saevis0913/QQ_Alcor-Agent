@@ -2,7 +2,7 @@
 // 只读 /api/update-status 轮询，不主动联网；检查由后端启动时静默完成。
 (() => {
   if (typeof document === 'undefined') return;
-  const POLL_MS = 60_000;
+  const POLL_MS = 20_000;
   const FAST_MS = 900;
   let banner = null;
   let status = null;
@@ -20,7 +20,12 @@
     UPDATE_PAYLOAD_MISSING: '安装包不在本地，请重新下载',
     UPDATE_NOTHING_TO_DOWNLOAD: '当前没有可下载的新版本',
     UPDATE_MANIFEST_INVALID: '更新信息格式无效',
-    UPDATE_RELEASE_PENDING: '更新源正在发布中，请稍后再试'
+    UPDATE_RELEASE_PENDING: '更新源正在发布中，请稍后再试',
+    UPDATE_ALL_SOURCES_FAILED: '所有更新源都连不上，稍后会自动重试（也可以让 AI 换源）',
+    UPDATE_SOURCE_NOT_CONFIGURED: '还没配置更新源',
+    UPDATE_AI_NO_PLAN: 'AI 没能给出可用的下载地址',
+    UPDATE_REPAIR_UNAVAILABLE: '当前没有可修复的更新任务',
+    UPDATE_REPAIR_FAILED: 'AI 换源后仍然没能装好'
   };
   const codeText = (code) => CODE_TEXT[code] || code || '未知原因';
 
@@ -67,8 +72,10 @@
       detail = '正在退出并交给安装程序，稍后会自动打开新版本';
       action = '<button class="btn btn-small" id="update-action" disabled>安装中</button>';
     } else if (phase === 'error') {
-      detail = `更新失败：${codeText(status.error)}`;
-      action = '<button class="btn btn-small" id="update-action">重试下载</button>';
+      detail = status.repair === 'asking-ai'
+        ? '下载失败，正在让 AI 寻找可用下载源…'
+        : `更新失败：${codeText(status.error)}（可以让 AI 换一条下载源）`;
+      action = '<button class="btn btn-primary btn-small" id="update-action">重试 / 让 AI 修复</button>';
     } else {
       // 发布说明第一行通常是 Markdown 标题，挑第一行真正的正文，否则横幅里会顶着「## …」。
       const noteLine = String(status.notes || '').split('\n').map(line => line.trim())
@@ -119,6 +126,17 @@
     } catch (error) {
       status = { ...(status || {}), phase: 'error', error: String(error?.message || error) };
       paint();
+      // 常规下载失败后立刻让已配置的模型给一条备用直链，用户不需要再点一次。
+      try {
+        status = { ...status, repair: 'asking-ai' };
+        paint();
+        await api('/api/update-repair', { method: 'POST', body: '{}' });
+        status = await api('/api/update-status').catch(() => status);
+        paint();
+      } catch (repairError) {
+        status = { ...status, repair: 'failed', error: String(repairError?.message || status.error || '') };
+        paint();
+      }
     } finally {
       busy = false;
     }
