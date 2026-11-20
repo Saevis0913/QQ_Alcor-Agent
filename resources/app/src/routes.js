@@ -19,7 +19,7 @@ import { readUpdateSource, writeUpdateSource } from './update-source.js';
 import { diagnoseQQ, scanFrameworkDirs, qqInstallRoots } from './qq-diagnosis.js';
 import { collectInjectionCheck, runInjectionFix, formatInjectionReport } from './injection-doctor.js';
 import { probeQQCompat } from './qq-compat.js';
-import { restartQQ, waitForQQ } from './qq-repair.js';
+import { restartQQ, waitForQQ, locateQQExecutable } from './qq-repair.js';
 import { listModels, chatCompletion, resolveApiKey, estimateCost, cacheHitRate } from './llm.js';
 import { resolveOfficialPrice, listOfficialPrices } from './model-prices.js';
 import { refreshPriceFeed, priceFeedStatus, initPriceFeed } from './price-feed.js';
@@ -127,6 +127,68 @@ export function createRoutes(deps) {
       }
     };
   };
+
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // 「一键检测并连接」：启动核心、拉起 QQ、重试注入、未适配构建走兼容模式（用户已同意时），
+  // 每一步都留记录，界面照抄显示。
+  async function autoConnect({ allowUnverified = false } = {}) {
+    const steps = [];
+    const push = (id, text, status = 'ok') => { steps.push({ id, text, status }); };
+    let state = await deps.alcorInspect();
+    if (!state.running) {
+      push('core', 'Alcor 核心没在运行，先启动它', 'running');
+      try { await launchAlcor(); } catch { /* 下面统一判定 */ }
+      await wait(2500);
+      state = await deps.alcorInspect();
+    }
+    push('core', state.running ? '核心已运行' : '核心没有起来', state.running ? 'ok' : 'error');
+    if (!state.running) return { code: 'CORE_OFFLINE', steps };
+
+    let verdict = await collectQQDiagnosis(deps, { fresh: true });
+    push('probe', '当前判定：' + verdict.code + (verdict.title ? '（' + verdict.title + '）' : ''), 'ok');
+    if (verdict.code === 'ALREADY_CONNECTED') return { code: 'ALREADY_CONNECTED', steps, connection: verdict.connection || null };
+
+    if (verdict.code === 'NO_QQ_RUNNING') {
+      const exe = await locateQQExecutable();
+      if (!exe) { push('qq', '没找到 QQ 安装位置，请先安装官方 QQ', 'manual'); return { code: 'NO_QQ_INSTALL', steps }; }
+      try {
+        const { spawn } = await import('node:child_process');
+        const child = spawn(exe, [], { detached: true, stdio: 'ignore', windowsHide: false });
+        child.unref();
+        push('qq', '已启动 QQ（' + exe + '），登录后点「重新检测」', 'ok');
+      } catch (error) { push('qq', '启动 QQ 失败：' + (error?.message || error), 'manual'); return { code: 'NO_QQ_INSTALL', steps }; }
+      await wait(12_000);
+      verdict = await collectQQDiagnosis(deps, { fresh: true });
+      push('qq', '重新检测：' + verdict.code, 'ok');
+      if (verdict.code === 'NO_QQ_RUNNING') return { code: 'WAITING_LOGIN', steps };
+    }
+
+    if (verdict.code === 'ELEVATION_MISMATCH') { push('elevation', 'QQ 与 Alcor 权限不一致，需要统一权限后重开', 'manual'); return { code: 'ELEVATION_MISMATCH', steps, canRelaunchAdmin: true }; }
+    if (verdict.code === 'SESSION_MISMATCH') { push('session', 'QQ 与 Alcor 不在同一个 Windows 会话', 'manual'); return { code: 'SESSION_MISMATCH', steps }; }
+    if (verdict.code === 'UNSUPPORTED_BUILD' && !allowUnverified) { push('build', '当前 QQ 构建未适配，可以选「仍然尝试注入」', 'manual'); return { code: 'UNSUPPORTED_BUILD', steps, needConsent: true }; }
+    if (verdict.code === 'HOST_PRESENT') {
+      push('host', '宿主还在 QQ 里，等它自己接回来（最多 30 秒）', 'running');
+      await wait(30_000);
+      verdict = await collectQQDiagnosis(deps, { fresh: true });
+      push('host', '等待后判定：' + verdict.code, 'ok');
+      if (verdict.code === 'ALREADY_CONNECTED') return { code: 'ALREADY_CONNECTED', steps, connection: verdict.connection || null };
+    }
+
+    const pid = Number(verdict.candidate?.pid) || null;
+    if (!pid) { push('connect', '没有可连接的 QQ 进程（' + verdict.code + '）', 'manual'); return { code: verdict.code, steps }; }
+    const retryable = new Set(['HOST_ENTRY_FAILED', 'HOST_THREAD_PENDING', 'HOST_LOADER_TIMEOUT', 'HOST_START_INCOMPLETE', 'NATIVE_CONNECT_FAILED']);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const result = await deps.alcorManage('native/connect', { method: 'POST', body: { pid, ...(allowUnverified ? { allowUnverified: true } : {}) }, timeoutMs: 90_000 });
+      const wording = result.body?.wording || result.body?.error || '';
+      const ok = result.ok && result.body?.status !== 'failed';
+      if (ok) { push('connect', '第 ' + attempt + ' 次就注入成功（PID ' + pid + '）', 'ok'); return { code: 'CONNECTED', steps, connection: result.body?.data || result.body || null, pid }; }
+      push('connect', '第 ' + attempt + ' 次失败：' + (wording || '未知原因'), attempt < 3 && retryable.has(String(wording)) ? 'retry' : 'error');
+      if (!retryable.has(String(wording))) break;
+      await wait(1200 * attempt);
+    }
+    return { code: 'CONNECT_FAILED', steps };
+  }
 
   return [
     ...createStickerRoutes({ stickers: deps.stickers, readBody, log }),
@@ -400,13 +462,37 @@ export function createRoutes(deps) {
           return json(res, 200, { status: 'ok', data: { pid: verdict.connection?.pid ?? null, connection: verdict.connection || null, note: verdict.code } });
         }
         if (!pid) return json(res, 400, { status: 'failed', wording: verdict.code, error: verdict.hint || verdict.title });
-        const result = await deps.alcorManage('native/connect', { method: 'POST', body: { pid }, timeoutMs: 60_000 });
+        const allowUnverified = body?.allowUnverified === true;
+        const result = await deps.alcorManage('native/connect', { method: 'POST', body: { pid, ...(allowUnverified ? { allowUnverified } : {}) }, timeoutMs: 90_000 });
         if (!result.ok || result.body?.status === 'failed') {
           return json(res, 502, { status: 'failed', wording: result.body?.wording || result.body?.error || 'QQ_CONNECT_FAILED',
             error: result.body?.wording || result.body?.error || '连接 QQ 失败' });
         }
         log('info', 'qq', 'QQ 原生宿主连接请求已提交 · PID ' + pid);
         return json(res, 200, { status: 'ok', data: { pid, connection: result.body?.data || result.body || null } });
+      }
+    },
+    {
+      // 一键：启动核心 → 拉起 QQ → 重试注入 → 未适配构建走兼容模式
+      method: 'POST', pattern: '/api/qq/autoconnect',
+      handler: async ({ res, json, body }) => {
+        const outcome = await autoConnect({ allowUnverified: body?.allowUnverified === true });
+        return json(res, 200, { status: 'ok', data: outcome });
+      }
+    },
+    {
+      // 以管理员身份重启自己：权限不一致时唯一的自动出路（用户点了才执行）
+      method: 'POST', pattern: '/api/app/relaunch-admin',
+      handler: async ({ res, json }) => {
+        try {
+          const { spawn } = await import('node:child_process');
+          const exe = process.execPath;
+          const child = spawn('powershell.exe', ['-NoProfile', '-Command', "Start-Process -FilePath '" + exe.replace(/'/g, "''") + "' -Verb RunAs"], { windowsHide: true, detached: true, stdio: 'ignore' });
+          child.unref();
+          return json(res, 200, { status: 'ok', data: { relaunched: true } });
+        } catch (error) {
+          return json(res, 502, { status: 'failed', wording: 'RELAUNCH_FAILED', error: String(error?.message || error) });
+        }
       }
     },
     {

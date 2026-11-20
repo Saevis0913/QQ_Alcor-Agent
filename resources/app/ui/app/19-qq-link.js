@@ -48,7 +48,8 @@
       ${compatHtml(v)}
       ${dirs ? `<ul class="qq-dirs">${dirs}</ul>` : ''}
       <div class="qq-acts">
-        ${canConnect ? '<button class="btn btn-primary btn-small" data-qq="connect">连接 QQ</button>' : ''}
+        <button class="btn btn-primary btn-small" data-qq="auto">一键检测并连接</button>
+        ${canConnect ? '<button class="btn btn-small" data-qq="connect">只连接这一个</button>' : ''}
         <button class="btn btn-small" data-qq="restart">重启 QQ 后重试</button>
         <button class="btn btn-small" data-qq="rescan">重新扫描</button>
         <span class="qq-note">排查程序（安装目录）：「控制台无法连接，显示被占用点这个，对照最后一行判定码.cmd」</span>
@@ -89,7 +90,9 @@
 
   function setStatus(box, text) {
     const node = box.querySelector('.qq-status');
-    if (node) node.textContent = text;
+    if (!node) return;
+    node.textContent = text;
+    node.style.whiteSpace = 'pre-wrap';
   }
 
   function bind(box, v) {
@@ -100,6 +103,46 @@
         const kind = button.dataset.qq;
         box.querySelectorAll('[data-qq]').forEach((b) => { b.disabled = true; });
         try {
+          if (kind === 'auto' || kind === 'force') {
+            setStatus(box, kind === 'force' ? '正在按兼容模式尝试注入（QQ 可能会重启）…' : '正在按顺序检查并连接，最长约一分钟…');
+            const body = kind === 'force' ? JSON.stringify({ allowUnverified: true }) : '{}';
+            const result = await api('/api/qq/autoconnect', { method: 'POST', body });
+            const data = result.data || {};
+            const lines = (data.steps || []).map((step) => (step.status === 'error' ? '✗ ' : step.status === 'manual' ? '! ' : step.status === 'retry' ? '↻ ' : '· ') + step.text);
+            const tail = data.code === 'ALREADY_CONNECTED' ? '已连接，完成。' : data.code === 'CONNECTED' ? '注入成功，正在确认账号…' : data.code === 'WAITING_LOGIN' ? 'QQ 已打开，登录后在下面点「重新扫描」。' : '结果：' + (data.code || '未知');
+            setStatus(box, [...lines, tail].join('\n'));
+            await paint(box, { fresh: true });
+            const fresh = { ...v };
+            if (data.needConsent) {
+              const acts = box.querySelector('.qq-acts');
+              if (acts && !acts.querySelector('[data-qq="force"]')) {
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-primary btn-small';
+                btn.dataset.qq = 'force';
+                btn.textContent = '仍然尝试注入';
+                acts.prepend(btn);
+              }
+            }
+            if (data.canRelaunchAdmin) {
+              const acts = box.querySelector('.qq-acts');
+              if (acts && !acts.querySelector('[data-qq="admin"]')) {
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-small';
+                btn.dataset.qq = 'admin';
+                btn.textContent = '以管理员重启';
+                acts.prepend(btn);
+              }
+            }
+            bind(box, fresh);
+            if (typeof refreshStatus === 'function') refreshStatus();
+            return;
+          }
+          if (kind === 'admin') {
+            setStatus(box, '正在以管理员身份重启…');
+            const result = await api('/api/app/relaunch-admin', { method: 'POST', body: '{}' });
+            setStatus(box, result.status === 'ok' ? '已请求提权启动，稍等新窗口出现后再点「重新扫描」。' : '提权失败：' + (result.error || result.wording || '未知原因'));
+            return;
+          }
           if (kind === 'connect') {
             setStatus(box, '正在连接 QQ…');
             const result = await api('/api/qq/connect', { method: 'POST', body: JSON.stringify({ pid: v.candidate?.pid }) });

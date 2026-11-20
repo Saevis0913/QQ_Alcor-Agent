@@ -20,6 +20,27 @@ export function qqExecutable(processes = []) {
   return '';
 }
 
+/** QQ 没在运行时也能找到它：先看注册表登记，再看常见安装位置。 */
+export async function locateQQExecutable() {
+  const keys = [
+    'HKLM\\SOFTWARE\\WOW6432Node\\Tencent\\QQNT',
+    'HKLM\\SOFTWARE\\Tencent\\QQNT',
+    'HKCU\\Software\\Tencent\\QQNT',
+  ];
+  const script = keys.map((k) => `(Get-ItemProperty '${k}' -ErrorAction SilentlyContinue).InstallDir`).join(';');
+  const probe = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], 12000);
+  const fromReg = String(probe.stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const candidates = [
+    ...fromReg.map((dir) => dir.replace(/[\\/]+$/, '') + '\\QQ.exe'),
+    'C:\\Program Files\\Tencent\\QQNT\\QQ.exe',
+    'C:\\Program Files (x86)\\Tencent\\QQNT\\QQ.exe',
+    'D:\\QQ\\QQ.exe',
+    'D:\\Program Files\\Tencent\\QQNT\\QQ.exe',
+  ];
+  for (const file of candidates) { try { if (fs.statSync(file).isFile()) return file; } catch { /* 下一个 */ } }
+  return '';
+}
+
 /** 关掉所有 QQ 进程，等它们真的退出，再从原路径重新启动。 */
 export async function restartQQ({ listProcesses }) {
   const before = await listProcesses();

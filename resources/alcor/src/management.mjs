@@ -39,7 +39,7 @@ export function createManagement({config,backend,status,inventory=discoverQQ,sta
     }
     if(route==='native/connect'&&method==='POST'){
       if(!backend.controller)throw new BridgeError('SELECT_NATIVE_CONFIGURATION_FIRST',409);
-      try{const r=await (nativeResume ? nativeResume.select(body.pid) : backend.connect(body.pid));log('info','native','已连接官方 QQ 进程，群聊与私聊接收已启动');return r;}
+      try{const allowUnverified=body.allowUnverified===true;const r=await (nativeResume ? nativeResume.select(body.pid, {allowUnverified}) : backend.connect(body.pid, {allowUnverified}));log('info','native','已连接官方 QQ 进程，群聊与私聊接收已启动');return r;}
       catch(e){const code=/^[A-Z_]+$/.test(e.message)?e.message:'NATIVE_CONNECT_FAILED';const reason=await explainConnectFailure(body.pid,code);log('warn','native','原生连接失败 · '+reason);throw new BridgeError(reason,409);}
     }
     if(route==='native/disconnect'&&method==='POST'){

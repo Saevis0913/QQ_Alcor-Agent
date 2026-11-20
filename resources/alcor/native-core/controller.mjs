@@ -47,7 +47,7 @@ export class NativeController {
     const owner=this.owner;
     return owner?.startedAt&&owner.account ? {pid:owner.pid,startedAt:owner.startedAt,account:owner.account} : null;
   }
-  connect(pid, {startedAt,account} = {}){
+  connect(pid, {startedAt,account,allowUnverified} = {}){
     if(!Number.isInteger(pid)||pid<1||pid>0xffffffff)return Promise.reject(new Error('INVALID_QQ_PID'));
     if((startedAt!==undefined||account!==undefined)&&(!/^[1-9]\d{16,18}$/.test(startedAt||'')||!/^[1-9]\d{0,9}$/.test(account||'')||Number(account)>0xffffffff))return Promise.reject(new Error('INVALID_QQ_SELECTION'));
     if(this.closed)return Promise.reject(new Error('CONTROLLER_CLOSED'));
@@ -58,7 +58,15 @@ export class NativeController {
         if(this.owner.pid===pid&&(!startedAt||(this.owner.startedAt===startedAt&&this.owner.account===account)))return this.snapshot();
         throw new Error('DISCONNECT_CURRENT_ACCOUNT_FIRST');
       }
-      const row=(await this.inventory()).find(r=>r.pid===pid);if(!row?.supported)throw new Error('UNSUPPORTED_QQ');
+      const row=(await this.inventory()).find(r=>r.pid===pid);
+      if(!row)throw new Error('QQ_PROCESS_NOT_FOUND');
+      if(!row.supported){
+        // 兼容模式：只有用户明确同意、而且只是「构建未适配」（进程本身可读）时才继续。
+        // 其他原因（外来模块、宿主已在、进程读不到）继续拒绝，那些试了只会更糟。
+        const relaxable=allowUnverified===true&&row.reason==='UNSUPPORTED_BUILD'&&typeof row.path==='string'&&/[\\/]QQ\.exe$/i.test(row.path);
+        if(!relaxable)throw new Error('UNSUPPORTED_QQ');
+        this.lastError='UNVERIFIED_BUILD_ATTEMPT';
+      }
       const creation=/^[1-9]\d{16,18}$/.test(row.creationTime||'')?row.creationTime:null;
       if(startedAt&&creation!==startedAt)throw new Error('NATIVE_PROCESS_CHANGED');
       const owner={pid,nonce:randomBytes(16).toString('hex'),account:null,startedAt:creation};

@@ -117,13 +117,13 @@ export function createNativeResume(configFile, backend, { setTimeout: schedule =
       selected = { pid: saved.pid, startedAt: saved.startedAt, account: saved.account };
       return resume();
     },
-    async select(pid) {
+    async select(pid, options = {}) {
       if (closed) throw new Error('NATIVE_CONNECT_CANCELLED');
       forget();
       const attempt = revision;
       if (pending) await pending.catch(() => {});
       if (closed || revision !== attempt) throw new Error('NATIVE_CONNECT_CANCELLED');
-      const operation = backend.connect(pid);
+      const operation = backend.connect(pid, options);
       pending = operation;
       try {
         const result = await operation;
