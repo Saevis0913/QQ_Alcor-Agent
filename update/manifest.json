@@ -1,16 +1,17 @@
 {
   "product": "Alcor Agent",
-  "latest": "0.3.0",
+  "latest": "0.3.1",
   "minSupported": "0.2.0",
   "applyMode": "restart",
-  "notes": "## Alcor Agent 正式版 v0.3.0\n\n新增：首启进程注入可行性检测、一键检测并连接 QQ、未登记 QQ 版本可尝试注入、注入失败按阶段给出判定码、搜索服务逐项体检、清空拆成「近期聊天 / 近期记忆」两项、系统默认人设与保存并刷新。\n\n修复：视频缺封面报错名、视频协商失败快速返回、巡检器账号 id、清空记忆空数组、人设预览、单实例锁、更新横幅版式、检查更新状态回写。",
-  "publishedAt": "2026-11-20T13:55:00Z",
+  "notes": "0.3.1：获取更新改成多源清单（9 条通路竞速，内置于程序内），小版本检测到即自动下载安装，装不上时改由已配置的模型给出下载地址兜底。",
+  "publishedAt": "2026-11-20T14:42:27.086Z",
   "rollout": 100,
   "full": {
     "urls": [
-      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3.0/Alcor-Agent-Setup-0.3.0-x64.exe"
+      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.1-x64.exe"
     ],
-    "bytes": 319399717,
-    "sha256": "12122fffb2509b6195dffe1114ea82a8334da7bb2d9a37a61ec8eed36c7dfa26"
+    "bytes": 319389598,
+    "sha256": "75f1317340b840b9081a83ace006ab3675c34a3f6806d5bda949e3c2dfd32c9e",
+    "fileName": "Alcor-Agent-Setup-0.3.1-x64.exe"
   }
 }
