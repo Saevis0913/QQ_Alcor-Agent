@@ -173,6 +173,37 @@ await api('PUT', `${API}/repos/${owner}/${name}/contents/update/manifest.json`, 
   branch: 'main',
   ...(sha ? { sha } : {})
 });
+// 4b) 小版本记录：同一个文件每次覆盖，仓库 update/ 目录里看到的永远是最新一次
+const rolling = [
+  '<!-- 每次发布由 tools/publish-update.mjs 覆盖本文件，这里只保留最新一条。 -->',
+  '# Alcor Agent 小版本更新记录',
+  '',
+  '- 版本：' + version,
+  '- 发布时间：' + manifest.publishedAt,
+  '- 安装包：' + assetName + '（' + bytes + ' B）',
+  '- sha256：' + sha256,
+  '- 下载：' + manifest.full.urls[0],
+  '',
+  '## 本次更新',
+  '',
+  notes,
+  ''
+].join('\n');
+let notesSha = null;
+try {
+  const current = await api('GET', `${API}/repos/${owner}/${name}/contents/update/notes.md`);
+  notesSha = current.sha;
+} catch (error) {
+  if (error.status !== 404) throw error;
+}
+await api('PUT', `${API}/repos/${owner}/${name}/contents/update/notes.md`, {
+  message: `Publish update notes for ${version}`,
+  content: Buffer.from(rolling).toString('base64'),
+  branch: 'main',
+  ...(notesSha ? { sha: notesSha } : {})
+});
+console.log('小版本记录已覆盖：update/notes.md → ' + version);
+
 // 5) 清掉 jsDelivr 的缓存，否则它可能还在发上一个版本（客户端会挑最高版本，但清掉更快）
 try {
   const response = await fetch(`https://purge.jsdelivr.net/gh/${owner}/${name}@main/update/manifest.json`);
