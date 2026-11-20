@@ -11,7 +11,12 @@
     HOST_PRESENT: '宿主残留',
     FOREIGN_MODULES: '其它框架残留',
     PROCESS_UNREADABLE: '读不到 QQ',
-    CORE_OFFLINE: '核心没运行'
+    CORE_OFFLINE: '核心没运行',
+    ELEVATION_MISMATCH: '权限不一致',
+    SESSION_MISMATCH: '会话不一致',
+    ARCH_MISMATCH: 'QQ 非 64 位',
+    HOST_RUNTIME_BROKEN: '注入组件缺失',
+    INJECTION_BLOCKED: '注入被拦'
   };
   const shortOf = (code) => SHORT[code] || '未连接';
   let busy = false;
@@ -40,6 +45,7 @@
       ${v.detail ? `<p class="qq-detail">${esc(v.detail)}</p>` : ''}
       ${v.hint ? `<p class="qq-hint">${esc(v.hint)}</p>` : ''}
       <ul class="qq-procs">${(v.processes || []).map(rowHtml).join('') || '<li class="qq-empty">没有检测到运行中的 QQ</li>'}</ul>
+      ${compatHtml(v)}
       ${dirs ? `<ul class="qq-dirs">${dirs}</ul>` : ''}
       <div class="qq-acts">
         ${canConnect ? '<button class="btn btn-primary btn-small" data-qq="connect">连接 QQ</button>' : ''}
@@ -48,6 +54,25 @@
         <span class="qq-note">排查程序（安装目录）：「控制台无法连接，显示被占用点这个，对照最后一行判定码.cmd」</span>
       </div>
       <p class="qq-status" role="status"></p>`;
+  }
+
+  // 环境事实：版本与外来框架之外，真正让注入失败的东西（权限/会话/安全策略/注入器）。
+  function compatHtml(v) {
+    const c = v.compat;
+    if (!c) return '';
+    const bits = [];
+    if (c.os?.version) bits.push(`系统 ${esc(c.os.version)}${c.os.arch ? ' · ' + esc(c.os.arch) : ''}`);
+    if (c.self) bits.push(`Alcor 会话 ${esc(String(c.self.sessionId))} · ${c.self.elevated ? '管理员' : '普通权限'}`);
+    if (c.qq?.length) bits.push(c.qq.map((q) => `QQ ${esc(String(q.pid))} · ${esc(q.arch || '未知架构')}${q.store ? ' · 商店版' : ''}`).join('；'));
+    const loader = c.loader || {};
+    bits.push(loader.ran ? '注入器可运行' : `注入器不可用（${esc(loader.reason || '未知')}）`);
+    bits.push(c.hostDll?.ok ? '宿主 DLL 正常' : '宿主 DLL 缺失');
+    const sec = c.security || {};
+    if (sec.hvci === 1) bits.push('内存完整性已开启');
+    if (sec.smartAppControl === 1 || sec.smartAppControl === 2) bits.push('智能应用控制已开启');
+    if (sec.defender?.realtime === false) bits.push('Defender 实时保护关闭');
+    const warn = (v.warnings || []).filter(Boolean);
+    return `<p class="qq-compat">${bits.join(' · ')}</p>${warn.length ? `<p class="qq-warnline">注意：${esc(warn.join('、'))}</p>` : ''}`;
   }
 
   async function paint(box, { fresh = false } = {}) {

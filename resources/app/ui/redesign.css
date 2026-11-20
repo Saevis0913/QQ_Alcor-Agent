@@ -2859,3 +2859,7 @@ html[data-theme] .search-service-row .search-test-result {
 }
 /* 「逐个测试」按钮被 flex 压窄后文字会压到提示语上 */
 html[data-theme] #search-test-all-btn { flex: 0 0 auto; white-space: nowrap; min-width: 92px; padding: 4px 12px; }
+
+/* 环境事实：权限/会话/安全策略/注入器，一行给全，避免「查不出原因」。 */
+html[data-theme] .qq-compat { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: var(--muted, #8b93a7); word-break: break-word; }
+html[data-theme] .qq-warnline { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: var(--warn, #d9a441); }

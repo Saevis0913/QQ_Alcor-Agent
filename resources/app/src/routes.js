@@ -17,6 +17,7 @@ import { getConfig, updateConfig, deepMerge as deepMergeConfig, DATA_DIR, ROOT }
 import { customSearch, SEARCH_PROVIDER_META, testSearchProvider } from './web-search.js';
 import { readUpdateSource, writeUpdateSource } from './update-source.js';
 import { diagnoseQQ, scanFrameworkDirs, qqInstallRoots } from './qq-diagnosis.js';
+import { probeQQCompat } from './qq-compat.js';
 import { restartQQ, waitForQQ } from './qq-repair.js';
 import { listModels, chatCompletion, resolveApiKey, estimateCost, cacheHitRate } from './llm.js';
 import { resolveOfficialPrice, listOfficialPrices } from './model-prices.js';
@@ -85,8 +86,14 @@ export function createRoutes(deps) {
         connection = result.body?.connection || null;
       } catch { /* 核心活着但进程清单读不到：仍然给出「核心在、QQ 未确认」的结论 */ }
     }
+    let compat = null;
+    try {
+      // 进程清单为空时也要探：注入器/宿主 DLL 缺不缺，与 QQ 有没有打开无关。
+      compat = await probeQQCompat({ processRows: processes });
+    } catch { compat = null; }
     const verdict = diagnoseQQ({ running: state.running, backendReady: state.backendReady, processes, connection,
-      frameworkDirs: scanFrameworkDirs(qqInstallRoots(processes)) });
+      frameworkDirs: scanFrameworkDirs(qqInstallRoots(processes)),
+      compat, lastFailure: connection?.lastFailure || null });
     qqDiagCache = { at: now, running: state.running, backendReady: state.backendReady, verdict };
     return verdict;
   }
@@ -359,6 +366,11 @@ export function createRoutes(deps) {
       handler: async ({ res, json, body }) => {
         const verdict = await collectQQDiagnosis(deps, { fresh: true });
         const pid = Number(body?.pid) || verdict.candidate?.pid;
+        // 宿主已经连上、只是消息通道还没确认时，这不是失败：如实回 200，让界面显示「已连接/正在确认」，
+        // 否则用户会看到「连接失败」，而实际上下一次扫描就已经是已连接状态。
+        if (!pid && (verdict.code === 'ALREADY_CONNECTED' || verdict.code === 'RECEIVE_NOT_READY')) {
+          return json(res, 200, { status: 'ok', data: { pid: verdict.connection?.pid ?? null, connection: verdict.connection || null, note: verdict.code } });
+        }
         if (!pid) return json(res, 400, { status: 'failed', wording: verdict.code, error: verdict.hint || verdict.title });
         const result = await deps.alcorManage('native/connect', { method: 'POST', body: { pid }, timeoutMs: 60_000 });
         if (!result.ok || result.body?.status === 'failed') {

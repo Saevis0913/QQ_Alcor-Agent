@@ -14,6 +14,12 @@ async function load(pid,nonce,mode,startedAt){
 }
 /* 宿主刚装载时服务对象可能还在初始化，identity 会瞬时拿不到账号；
    有界重试把这种瞬时态和「QQ 真的没登录」区分开，避免把两者都报成同一个错误。 */
+/* 加载器的 stage 说明注入卡在哪一步：权限/会话、被杀软拦下、还是宿主入口没起来，各对应不同处置。 */
+const STAGE_FAILURES={artifact_identity:'HOST_ARTIFACT_INVALID',target_identity:'HOST_TARGET_DENIED',module_already_loaded:'HOST_ALREADY_PRESENT',load_library:'HOST_LOAD_BLOCKED',release_loader_reference:'HOST_REFERENCE_STUCK',start_host:'HOST_ENTRY_FAILED'};
+function loaderFailureCode(loaded){
+  if(loaded?.pendingThread)return 'HOST_THREAD_PENDING';
+  return STAGE_FAILURES[loaded?.stage]||'HOST_START_INCOMPLETE';
+}
 async function readIdentity(query,owner,attempts=3){
   let last=null;
   for(let i=0;i<attempts;i+=1){
@@ -23,12 +29,19 @@ async function readIdentity(query,owner,attempts=3){
   }
   return last;
 }
+async function runLoader(loader,pid,nonce,mode,startedAt){
+  try{return await loader(pid,nonce,mode,startedAt);}
+  catch(error){
+    const code=error?.code==='ENOENT'?'HOST_LOADER_MISSING':(error?.killed||error?.signal)?'HOST_LOADER_TIMEOUT':'HOST_LOADER_FAILED';
+    const wrapped=new Error(code);wrapped.stage=null;wrapped.status=null;wrapped.detail=String(error?.message||'').slice(0,160);throw wrapped;
+  }
+}
 export class NativeController {
   constructor({inventory=discoverQQ,loader=load,query=queryNativeHost,heartbeatMs=5000}={}){
     this.inventory=inventory;this.loader=loader;this.query=query;this.heartbeatMs=heartbeatMs;
-    this.owner=null;this.ownerGeneration=0;this.pending=null;this.disconnecting=null;this.tail=Promise.resolve();this.lastError=null;this.closed=false;
+    this.owner=null;this.ownerGeneration=0;this.pending=null;this.disconnecting=null;this.tail=Promise.resolve();this.lastError=null;this.lastFailure=null;this.closed=false;
   }
-  snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,lastError:this.lastError};}
+  snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,lastError:this.lastError,lastFailure:this.lastFailure};}
   enqueue(fn){const next=this.tail.then(fn);this.tail=next.catch(()=>{});return next;}
   resumeSelection(){
     const owner=this.owner;
@@ -50,17 +63,21 @@ export class NativeController {
       if(startedAt&&creation!==startedAt)throw new Error('NATIVE_PROCESS_CHANGED');
       const owner={pid,nonce:randomBytes(16).toString('hex'),account:null,startedAt:creation};
       if(this.closed||this.disconnecting)throw new Error('NATIVE_CONNECT_CANCELLED');
-      if((await this.loader(pid,owner.nonce,'inspect-qq',creation)).loaded)throw new Error('HOST_ALREADY_PRESENT');
+      const inspect=await runLoader(this.loader,pid,owner.nonce,'inspect-qq',creation);if(inspect.loaded)throw new Error('HOST_ALREADY_PRESENT');
       if(this.closed||this.disconnecting)throw new Error('NATIVE_CONNECT_CANCELLED');
-      const loaded=await this.loader(pid,owner.nonce,'qq',creation);
-      if(loaded.status!==0||!loaded.loaderReferenceReleased||loaded.pendingThread)throw new Error('HOST_START_INCOMPLETE');
+      const loaded=await runLoader(this.loader,pid,owner.nonce,'qq',creation);
+      if(loaded.status!==0||!loaded.loaderReferenceReleased||loaded.pendingThread){
+        const failure=loaderFailureCode(loaded);
+        this.lastFailure={code:failure,stage:loaded.stage||null,status:typeof loaded.status==='number'?loaded.status:null,at:new Date().toISOString()};
+        throw new Error(failure);
+      }
       this.owner=owner;
       try {
         const id=await readIdentity(this.query.bind(this),owner);
         if(id.status!==0||id.flags!==15||!id.account||id.account==='0')throw new Error('QQ_LOGIN_NOT_CONFIRMED');
         if(account&&id.account!==account)throw new Error('NATIVE_ACCOUNT_CHANGED');
         if(this.closed||this.disconnecting)throw new Error('NATIVE_CONNECT_CANCELLED');
-        owner.account=id.account;this.lastError=null;
+        owner.account=id.account;this.lastError=null;this.lastFailure=null;
         this.timer=setInterval(()=>{if(this.heartbeatPending)return;this.heartbeatPending=true;this.enqueue(async()=>{
           if(this.owner!==owner||this.disconnecting||this.closed)return;
           try{const r=await this.query({...owner,operation:'heartbeat'});if(r.status!==0)throw new Error('HOST_HEARTBEAT_FAILED');const id=await this.query({...owner,operation:'identity'});if(id.status!==0||id.flags!==15||id.account!==owner.account)throw new Error('HOST_ACCOUNT_CHANGED');}
@@ -68,7 +85,7 @@ export class NativeController {
         }).finally(()=>{this.heartbeatPending=false;});},this.heartbeatMs);this.timer.unref();
         return this.snapshot();
       }catch(error){await this.stopOwned();throw error;}
-    }).catch(error=>{this.lastError=/^[A-Z_]+$/.test(error.message)?error.message:'NATIVE_CONNECT_FAILED';throw new Error(this.lastError);});
+    }).catch(error=>{this.lastError=/^[A-Z_]+$/.test(error.message)?error.message:'NATIVE_CONNECT_FAILED';this.lastFailure={code:this.lastError,stage:error?.stage??this.lastFailure?.stage??null,status:error?.status??this.lastFailure?.status??null,detail:error?.detail??null,at:new Date().toISOString()};throw new Error(this.lastError);});
     this.pending={pid,startedAt,account,promise};promise.finally(()=>{if(this.pending?.promise===promise)this.pending=null;}).catch(()=>{});return promise;
   }
   request(operation, options = {}) {

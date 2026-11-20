@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { diagnoseQQ, scanFrameworkDirs, qqInstallRoots, formatReport } from '../src/qq-diagnosis.js';
+import { probeQQCompat } from '../src/qq-compat.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.ALCOR_DATA_DIR || path.resolve(here, '../../../data');
@@ -52,7 +53,12 @@ if (connection) {
   }
 }
 
-const verdict = diagnoseQQ(report);
+// 版本与外来框架之外的环境事实（权限/会话/安全策略/注入器/宿主 DLL）一并取证，
+// 否则「查不出原因」的机器仍然只会得到一句笼统结论。
+try {
+  report.compat = await probeQQCompat({ processRows: report.processes });
+} catch { report.compat = null; }
+const verdict = diagnoseQQ({ ...report, lastFailure: report.connection?.lastFailure || null });
 if (json) {
   console.log(JSON.stringify({ report, verdict }, null, 2));
 } else {
@@ -66,5 +72,5 @@ if (json) {
   formatReport({ ...verdict, running: report.running, backendReady: report.backendReady });
 }
 
-const codes = { ALREADY_CONNECTED: 0, READY_TO_CONNECT: 0, RECEIVE_NOT_READY: 1, HOST_PRESENT: 1, FOREIGN_MODULES: 1, NO_QQ_RUNNING: 1, UNSUPPORTED_BUILD: 2, PROCESS_UNREADABLE: 4 };
+const codes = { ALREADY_CONNECTED: 0, READY_TO_CONNECT: 0, RECEIVE_NOT_READY: 1, HOST_PRESENT: 1, FOREIGN_MODULES: 1, NO_QQ_RUNNING: 1, UNSUPPORTED_BUILD: 2, PROCESS_UNREADABLE: 4, ELEVATION_MISMATCH: 5, SESSION_MISMATCH: 5, ARCH_MISMATCH: 2, HOST_RUNTIME_BROKEN: 6, INJECTION_BLOCKED: 7 };
 process.exitCode = report.running ? (codes[verdict.code] ?? 3) : 3;
