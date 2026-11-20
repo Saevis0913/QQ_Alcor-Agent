@@ -39,7 +39,14 @@ export function inspectVideo(input){
 }
 function fileInfo(file,video){return j(s(1,file.data.length),b(2,file.md5.toUpperCase()),b(3,file.sha1.toUpperCase()),b(4,file.md5+(video?'.mp4':'.'+file.extension)),b(5,video?s(1,2):j(s(1,1),s(2,file.format))),s(6,file.width),s(7,file.height),s(8,video?file.duration:0),s(9,video?0:1));}
 export async function prepareVideo(backend,input,coverInput,{isGroup,recipient,expectedAccount,fetchImpl=fetch}={}){
- const video=inspectVideo(input),cover=inspectImage(coverInput);if(cover.data.length>1024*1024||!['jpg','png'].includes(cover.extension))fail('VIDEO_COVER_INVALID');
+ // 宿主对视频协商的实现并不稳定：一旦某次协商把管道打断，后续重试只会继续折腾 QQ。
+ // 记住这个结论，之后直接给出可解释的失败码，而不是二十次 EPIPE。
+ if(backend.videoUnsupported===true)fail('VIDEO_NATIVE_UNSUPPORTED',503);
+ const video=inspectVideo(input);
+ // 缺封面时以前落到 inspectImage 的 IMAGE_INPUT_INVALID，名字误导；先单独判封面。
+ if(coverInput===undefined||coverInput===null||coverInput==='')fail('VIDEO_COVER_REQUIRED',400);
+ let cover;try{cover=inspectImage(coverInput);}catch{fail('VIDEO_COVER_INVALID',400);}
+ if(cover.data.length>1024*1024||!['jpg','png'].includes(cover.extension))fail('VIDEO_COVER_INVALID',400);
  const account=String(backend.account),generation=backend.receiveGeneration;
  const check=()=>{if(account!==backend.account||account!==String(expectedAccount)||generation!==backend.receiveGeneration||!backend.controller.snapshot().connected)fail('VIDEO_CONNECTION_CHANGED',409);};check();
  if(!Number.isInteger(recipient)||recipient<1||recipient>0xffffffff)fail('VIDEO_TARGET_INVALID');
@@ -49,7 +56,15 @@ export async function prepareVideo(backend,input,coverInput,{isGroup,recipient,e
  const head=j(b(1,j(s(1,1),s(2,100))),b(2,scene),b(3,s(1,2)));
  const upload=j(b(1,b(1,fileInfo(video,true))),b(1,j(b(1,fileInfo(cover,false)),s(2,100))),s(2,1),s(3,0),s(4,randomBytes(4).readUInt32LE()),s(5,isGroup?2:1),b(6,b(2,b(3,Buffer.from('800100','hex')))),s(7,10),s(8,0));
  const command=isGroup?0x11ea:0x11e9;
- const reply=await backend.controller.request(isGroup?'groupVideoUpload':'videoUpload',{payload:j(s(1,command),s(2,100),b(4,j(b(1,head),b(2,upload)))),expectedAccount:account,nativeTimeoutMs:8000,timeoutMs:10000});check();
+ let reply;
+ try{
+  reply=await backend.controller.request(isGroup?'groupVideoUpload':'videoUpload',{payload:j(s(1,command),s(2,100),b(4,j(b(1,head),b(2,upload)))),expectedAccount:account,nativeTimeoutMs:8000,timeoutMs:10000});
+ }catch(error){
+  const text=String(error?.message||error);
+  if(/EPIPE|ECONNRESET|ECONNABORTED|socket/i.test(text)){backend.videoUnsupported=true;fail('VIDEO_NATIVE_UNSUPPORTED',503);}
+  throw error;
+ }
+ check();
  if(reply.status!==0||!reply.received||reply.nativeStatus!==0)fail('VIDEO_NEGOTIATION_UNCONFIRMED',502);
  let info,key,coverKey;try{
   const envelope=fields(reply.payload);if(n(envelope,1)!==command||n(envelope,2)!==100||n(envelope,3))throw Error();const response=child(envelope,4);if(!response.has(1)||n(child(response,1),2))throw Error();
