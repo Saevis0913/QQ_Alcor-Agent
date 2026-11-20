@@ -19,10 +19,14 @@ function version(value){
   if(!match)throw Error('UPDATE_MANIFEST_INVALID');
   const pre=match[4]?.split('.')||[];
   if(pre.some(x=>!x||/^\d+$/.test(x)&&x.length>1&&x.startsWith('0')))throw Error('UPDATE_MANIFEST_INVALID');
-  return{numbers:match.slice(1,4).map(Number),pre};
+  const asPatch=/^as$/.test(pre[0])?Number(pre[1]||0):0;
+  return{numbers:match.slice(1,4).map(Number),pre,asPatch};
 }
 function newer(a,b){
   for(let i=0;i<3;i++)if(a.numbers[i]!==b.numbers[i])return a.numbers[i]>b.numbers[i];
+  /* Alcor 的小版本约定：0.3.1-as.1 是 0.3.1 的补丁，必须比 0.3.1 新，否则老用户收不到。 */
+  if(a.asPatch!==b.asPatch)return a.asPatch>b.asPatch;
+  if(a.asPatch)return false;
   if(!a.pre.length||!b.pre.length)return !a.pre.length&&b.pre.length>0;
   for(let i=0;i<Math.max(a.pre.length,b.pre.length);i++){
     if(a.pre[i]===b.pre[i])continue;
@@ -54,7 +58,7 @@ function githubManifest(releases, project, standard) {
   // 所以这里不看 latest 接口，而是把发行列表拉下来，按资产文件名里的版本号挑最高的一份。
   if (!Array.isArray(releases)) throw Error('UPDATE_MANIFEST_INVALID');
   const edition = standard ? 'Alcor-Agent-OneBot' : 'Alcor-Agent';
-  const pattern = new RegExp('^' + edition + '-Setup-(\\d+\\.\\d+\\.\\d+)-x64\\.exe$');
+  const pattern = new RegExp('^' + edition + '-Setup-(\\d+\\.\\d+\\.\\d+(?:-as\\.\\d+)?)-x64\\.exe$');
   let best = null;
   for (const release of releases) {
     if (!release || release.draft !== false || !Array.isArray(release.assets)) continue;
@@ -101,7 +105,7 @@ export async function checkReleaseUpdate(current,{source=releaseSource(),fetchBi
     if(manifest.notes!=null&&(typeof manifest.notes!=='string'||manifest.notes.length>16000))throw Error('UPDATE_MANIFEST_INVALID');
     if(manifest.publishedAt!=null&&(!Number.isFinite(Date.parse(manifest.publishedAt))||String(manifest.publishedAt).length>50))throw Error('UPDATE_MANIFEST_INVALID');
     // Stable installs do not advertise pre-releases from an accidentally changed feed.
-    const hasUpdate=(!parsed.pre.length||installed.pre.length>0)&&newer(parsed,installed);
+    const hasUpdate=(!parsed.pre.length||installed.pre.length>0||parsed.asPatch>0)&&newer(parsed,installed);
     return{...base,ok:true,latest,hasUpdate,url,notes:manifest.notes||'',publishedAt:manifest.publishedAt||null};
   }catch{return{...base,ok:false,code:'UPDATE_MANIFEST_INVALID',error:'更新信息格式或地址无效，请联系发布者检查版本清单。'};}
 }

@@ -149,6 +149,11 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
   const hostLoaded = rows.find((row) => row.alcorHostLoaded);
   const candidate = pickCandidate(rows);
 
+  if (foreignRow) {
+    return { ...base, code: 'FOREIGN_MODULES', title: `QQ 里驻留着其它框架的模块：${foreignRow.foreignModules.join('、')}`,
+      detail: '这些模块占用的正是原生接入要读的服务对象，两者同时存在时只能有一个拿到。',
+      hint: '退出那个框架、完全关掉 QQ 再登录，然后回来重连；不用卸载它，只要它别同时挂在 QQ 上。' };
+  }
   if (!supported.length) {
     const versions = [...new Set(rows.map((row) => row.version || '未知版本'))].join('、');
     const relaxed = pickRelaxedCandidate(rows);
@@ -171,11 +176,6 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
     return { ...base, code: 'HOST_PRESENT', title: 'Alcor 宿主还在 QQ 里，正在等它接回来',
       detail: '上一次连接留下的宿主还在 QQ 进程内（它只随 QQ 退出而消失）。它通常会在半分钟内自己连回控制台，这段时间不用动它。',
       hint: '先等 30 秒再点「重新扫描」；一直不恢复（或想立刻重连）再完全退出 QQ 重新登录，或用「重启 QQ」按钮。' };
-  }
-  if (foreignRow) {
-    return { ...base, code: 'FOREIGN_MODULES', title: `QQ 里驻留着其它框架的模块：${foreignRow.foreignModules.join('、')}`,
-      detail: '这些模块占用的正是原生接入要读的服务对象，两者同时存在时只能有一个拿到。',
-      hint: '退出那个框架、完全关掉 QQ 再登录，然后回来重连；不用卸载它，只要它别同时挂在 QQ 上。' };
   }
   if (!candidate) {
     return { ...base, code: 'PROCESS_UNREADABLE', title: 'QQ 进程读不到账号模块',

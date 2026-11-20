@@ -12,7 +12,9 @@
  *   optional 只是提醒，不挡使用（例如没开 QQ 时的账号检查）
  */
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
+import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { probeLoader, probeHostArtifact, probeEnvironment, peArchitecture } from './qq-compat.js';
 
@@ -86,6 +88,16 @@ export async function collectInjectionCheck({ installRoot, dataDir, processRows 
 
   add('hostdll', '宿主 alcor-host.dll', host.ok ? 'ok' : 'manual',
     host.ok ? `${host.bytes} B` : '文件缺失或被改动，请重新安装 Alcor Agent');
+
+  /* 注入 DLL 是让 QQ 自己去 LoadLibrary：安装路径带中文或接近 MAX_PATH 时那一步会失败。
+     native-core/controller.mjs 会自动把加载器与 DLL 搬到 ASCII 中转目录，这里把结论说给用户看。 */
+  const nativeDir = path.join(installRoot || '.', 'resources', 'alcor', 'artifacts', 'native', '');
+  const asciiSafe = /^[\x20-\x7e]+$/.test(nativeDir) && nativeDir.length <= 160;
+  const stagePath = asciiSafe ? nativeDir
+    : path.join(process.env.ProgramData || process.env.ALLUSERSPROFILE || os.tmpdir(), 'Alcor', 'host',
+      crypto.createHash('sha256').update(nativeDir).digest('hex').slice(0, 8));
+  add('hostpath', '注入路径', 'ok',
+    asciiSafe ? nativeDir : `安装路径含中文或过长，注入时会自动从中转目录 ${stagePath} 加载（不影响功能）`);
 
   add('datadir', '数据目录可写', data.ok ? 'ok' : 'fixable',
     data.ok ? `${data.dir}` : `不可写：${data.error}。点「自动修复」重建目录`,

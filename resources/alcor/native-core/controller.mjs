@@ -5,13 +5,42 @@ import {performance} from 'node:perf_hooks';
 import {fileURLToPath} from 'node:url';
 import {queryNativeHost} from './host-client.mjs';
 import {discoverQQ} from './discovery.mjs';
+import {createHash} from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 const run=promisify(execFile);
-const loaderPath=fileURLToPath(new URL('../artifacts/native/qq-host-loader.exe',import.meta.url));
+const nativeDir=fileURLToPath(new URL('../artifacts/native/',import.meta.url));
+/* 注入是由目标进程自己去 LoadLibrary 我们的 alcor-host.dll。
+   安装路径带中文、或长到逼近 MAX_PATH 时，目标进程里那一步会失败，用户只看到「注入失败」。
+   所以路径不干净时，先把加载器和 DLL 搬到纯 ASCII、短路径（ProgramData\Alcor\host\<目录哈希>）再从那里注入。
+   路径本来干净就不拷贝，保持原行为。 */
+const HOST_FILES=['qq-host-loader.exe','alcor-host.dll'];
+const ASCII_PATH=/^[\x20-\x7e]+$/;
+function stageDirFor(dir){
+  if(ASCII_PATH.test(dir)&&dir.length<=160)return null;
+  const base=process.env.ProgramData||process.env.ALLUSERSPROFILE||os.tmpdir();
+  const tag=createHash('sha256').update(dir).digest('hex').slice(0,8);
+  return path.join(base,'Alcor','host',tag);
+}
+function hostArtifacts(){
+  const stage=stageDirFor(nativeDir);
+  if(!stage)return {loader:path.join(nativeDir,'qq-host-loader.exe'),staged:false,dir:nativeDir};
+  fs.mkdirSync(stage,{recursive:true});
+  for(const name of HOST_FILES){
+    const src=path.join(nativeDir,name);const out=path.join(stage,name);
+    const from=fs.statSync(src);const to=fs.existsSync(out)?fs.statSync(out):null;
+    if(!to||to.size!==from.size||to.mtimeMs<from.mtimeMs)fs.copyFileSync(src,out);
+  }
+  return {loader:path.join(stage,'qq-host-loader.exe'),staged:true,dir:stage};
+}
 async function load(pid,nonce,mode,startedAt){
   const args=[String(pid),String(process.pid),nonce,mode];if(startedAt)args.push(startedAt);
-  const r=await run(loaderPath,args,{windowsHide:true,timeout:75000,maxBuffer:8192});
+  const {loader}=hostArtifacts();
+  const r=await run(loader,args,{windowsHide:true,timeout:75000,maxBuffer:8192});
   return JSON.parse(r.stdout);
 }
+export {hostArtifacts,stageDirFor};
 /* 宿主刚装载时服务对象可能还在初始化，identity 会瞬时拿不到账号；
    有界重试把这种瞬时态和「QQ 真的没登录」区分开，避免把两者都报成同一个错误。 */
 /* 加载器的 stage 说明注入卡在哪一步：权限/会话、被杀软拦下、还是宿主入口没起来，各对应不同处置。 */

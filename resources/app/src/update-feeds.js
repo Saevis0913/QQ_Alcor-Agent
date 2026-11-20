@@ -199,8 +199,20 @@ export function compareVersion(a, b) {
   for (let i = 0; i < 3; i++) {
     if (left.numbers[i] !== right.numbers[i]) return left.numbers[i] > right.numbers[i] ? 1 : -1;
   }
-  if (!left.pre.length && right.pre.length) return 1;
-  if (left.pre.length && !right.pre.length) return -1;
+  /* Alcor 自己的小版本约定：0.3.1-as.1 是 0.3.1 的补丁，必须比 0.3.1 新，
+     否则已经装了 0.3.1 的用户永远收不到 as 补丁。其它预发行标签（alpha/beta/rc）仍按语义化版本排在同号正式版之后。 */
+  const rank = (pre) => {
+    if (!pre.length) return { tier: 1, num: 0, rest: [] };
+    if (/^as$/i.test(pre[0])) return { tier: 2, num: Number(pre[1] || 0) || 0, rest: pre.slice(2) };
+    return { tier: 0, num: 0, rest: pre };
+  };
+  const lr = rank(left.pre);
+  const rr = rank(right.pre);
+  if (lr.tier !== rr.tier) return lr.tier > rr.tier ? 1 : -1;
+  if (lr.num !== rr.num) return lr.num > rr.num ? 1 : -1;
+  if (!lr.rest.length && !rr.rest.length) return 0;
+  left.pre = lr.rest;
+  right.pre = rr.rest;
   for (let i = 0; i < Math.max(left.pre.length, right.pre.length); i++) {
     const l = left.pre[i];
     const r = right.pre[i];

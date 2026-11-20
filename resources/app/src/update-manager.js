@@ -3,6 +3,7 @@
 // 下载优先用系统 curl（Node 的 retryRead 有 60s 硬上限，装不下 314 MB 安装包），
 // 校验用同仓库同版本的 SHA256SUMS.txt 对比，不一致就删掉、不启动安装器。
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -424,7 +425,10 @@ export function installUpdate({ onQuit } = {}) {
   const file = state.readyPath;
   if (!file || !fs.existsSync(file)) throw Object.assign(Error('UPDATE_PAYLOAD_MISSING'), { code: 'UPDATE_PAYLOAD_MISSING' });
   state = { ...state, phase: 'installing', error: '' };
-  const child = spawn(file, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS'], {
+  /* 必须显式指定安装目录：Inno 会记住「上一次用过的目录」，
+     不传就会把更新装到别的副本上（试过装进过验收目录），运行中的这份反而没升级。 */
+  const installRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+  const child = spawn(file, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS', `/DIR="${installRoot}"`], {
     detached: true,
     stdio: 'ignore',
     windowsHide: false
