@@ -1,17 +1,17 @@
 {
   "product": "Alcor Agent",
-  "latest": "0.3.2",
+  "latest": "0.3.1",
   "minSupported": "0.2.0",
   "applyMode": "restart",
-  "notes": "0.3.2 修复「装好了双击闪退 / 事件日志 0x80000003」：内置 VC++ 运行库（缺运行库的机器不再秒退）；启动即开崩溃转储（data/crash-dumps），闪退能拿到 dump；上次没走到就绪就自动进安全模式（关显卡加速与沙箱）重试；启动前清掉全局 ELECTRON_RUN_AS_NODE / NODE_OPTIONS；Start-Alcor-Agent.cmd 失败时会回退安全模式并打印诊断日志；新增「收集崩溃信息.cmd」一键生成上报表。更新通道改为预发行，不再占仓库首页 Releases 位。",
-  "publishedAt": "2026-11-20T15:05:36.655Z",
+  "notes": "正式大版本 0.3.1：修复「装好了双击闪退 / 事件日志 0x80000003」。\n\n- 内置 VC++ 运行库（vcruntime140 / vcruntime140_1 / msvcp140），没装运行库的机器不再一启动就闪退\n- 启动即开崩溃转储：闪退在 data/crash-dumps 留下 .dmp，下次能直接定位\n- 上次没走到就绪就自动进安全模式（关显卡加速与沙箱）重试一次\n- 启动前清掉全局 ELECTRON_RUN_AS_NODE / NODE_OPTIONS，避免被当成纯 Node 秒退\n- Start-Alcor-Agent.cmd 启动失败自动回退安全模式并打印诊断日志；新增「收集崩溃信息.cmd」\n- 获取更新：9 条清单通路 + 先清单后官方 API 的兜底，CDN 缓存旧版本时也能报出新版本\n- 大版本走仓库 Releases，小版本只覆盖 update/manifest.json 与 update/notes.md",
+  "publishedAt": "2026-11-20T15:20:56.492Z",
   "rollout": 100,
   "full": {
     "urls": [
-      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.2-x64.exe"
+      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3.1/Alcor-Agent-Setup-0.3.1-x64.exe"
     ],
-    "bytes": 319605052,
-    "sha256": "ce264b58e2bbfdc8c64dd8eb5a14ee092e93e6723bc88c6becbda240a072d870",
-    "fileName": "Alcor-Agent-Setup-0.3.2-x64.exe"
+    "bytes": 319598889,
+    "sha256": "71619deb278bcb6f4a065ce4dde506c765e61cf760685142808f50df02030292",
+    "fileName": "Alcor-Agent-Setup-0.3.1-x64.exe"
   }
 }
