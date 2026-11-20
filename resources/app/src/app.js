@@ -1444,7 +1444,7 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
     log(`控制台已就绪：http://127.0.0.1:${port}`);
     log(`OneBot（Alcor）: ws=${getConfig().alcor?.wsUrl} http=${getConfig().alcor?.httpUrl}`);
     log(`模型: ${getConfig().api.model || '（未设置，请在设置里选择）'} @ ${getConfig().api.baseUrl}`);
-    startUpdateWatcher({ current: localVersion(), standard, log });
+    startUpdateWatcher({ current: localVersion(), standard, log, onQuit: () => onQuitForUpdate?.() });
     return port;
   }
 

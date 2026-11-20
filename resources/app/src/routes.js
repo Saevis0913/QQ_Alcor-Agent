@@ -46,7 +46,7 @@ import { detectDialect as detectThinkingDialect } from './thinking.js';
 import { createQzoneRoutes } from './qzone-routes.js';
 import { releaseProjectUrl } from './release-update.js';
 import { checkForUpdate } from './update-manager.js';
-import { updateState, downloadUpdate, installUpdate } from './update-manager.js';
+import { updateState, downloadUpdate, installUpdate, repairUpdate } from './update-manager.js';
 import { createDesktopActions } from './desktop-actions.js';
 import { createChatActionRoutes } from './chat-actions.js';
 import { chatAllowed } from './inbound-policy.js';
@@ -1369,6 +1369,19 @@ export function createRoutes(deps) {
         } catch (error) {
           const code = String(error?.code || '').match(/^[A-Z_]+$/) ? String(error.code) : 'UPDATE_INSTALL_FAILED';
           return json(res, 400, { status: 'failed', retcode: 400, data: null, wording: code });
+        }
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/update-repair',
+      handler: async ({ res, json }) => {
+        // 下载装不上时的兜底：让已配置的模型给出候选直链，仍用清单哈希校验。
+        try {
+          const state = await repairUpdate();
+          return json(res, 200, { status: 'ok', data: { latest: state.latest, bytes: state.readyBytes, path: state.readyPath, note: state.repairNote || '' } });
+        } catch (error) {
+          const code = String(error?.code || '').match(/^[A-Z_]+$/) ? String(error.code) : 'UPDATE_REPAIR_FAILED';
+          return json(res, 502, { status: 'failed', retcode: 502, data: null, wording: code });
         }
       }
     },

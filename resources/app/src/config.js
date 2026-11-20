@@ -34,6 +34,9 @@ export const DEFAULT_CONFIG = {
   //   mentionWarmMinutes —— 被 @ / 拍一拍之后的"活跃期"分钟数。
   //   活跃期不改变用户的档位设置，只是在这段时间里多听几条、给一次插话机会。
   behavior: { mentionWarmMinutes: 8 },
+  // 自动更新：小版本（同主次版本号）默认直接下好并安装，用户不用点按钮。
+  //   原域名/镜像全部失败时会回落 GitHub Releases API，再失败走模型给出的直链。
+  update: { autoInstall: true },
   qzone: QZONE_DEFAULTS,
   // OpenAI 兼容 API（必填才能跑）
   api: {
