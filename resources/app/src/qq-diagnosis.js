@@ -43,6 +43,14 @@ function pickCandidate(processRows) {
   return clean.sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')))[0] || null;
 }
 
+// 未登记的构建：只要确实是 QQ.exe、没有外来模块、宿主没在里面，就允许用户在知情后试一次。
+// 99% 的兼容性靠的是「能试 + 失败可恢复」，而不是把识别名单无限拉长。
+export function pickRelaxedCandidate(processRows) {
+  const clean = processRows.filter((row) => row && !row.supported && row.reason === 'UNSUPPORTED_BUILD'
+    && !row.alcorHostLoaded && !(row.foreignModules?.length));
+  return clean.sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')))[0] || null;
+}
+
 // 注入阶段的失败码：core 现在把加载器的 stage 翻成这些码，再也不用「HOST_START_INCOMPLETE」一把梭。
 const FAILURE_TEXT = {
   HOST_TARGET_DENIED: ['注入被系统拒绝', '加载器没能拿到 QQ 进程的操作权：常见原因是 QQ 以管理员身份运行而 Alcor 不是、或两侧不在同一个 Windows 会话里。',
@@ -142,9 +150,16 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
 
   if (!supported.length) {
     const versions = [...new Set(rows.map((row) => row.version || '未知版本'))].join('、');
+    const relaxed = pickRelaxedCandidate(rows);
+    if (relaxed) {
+      return { ...base, code: 'QQ_BUILD_UNLISTED', title: `QQ 版本 ${versions} 未登记，可以试一次`,
+        detail: `这一版 QQ（PID ${relaxed.pid}）的 wrapper.node 不在随包名单里（已适配 ${SUPPORTED_QQ_VERSIONS.join(' / ')}），所以没有「已验证」保证。`,
+        hint: '点「仍然尝试注入」会用兼容模式试一次：注入失败会自动重启 QQ 恢复原状，不会把 QQ 弄坏。',
+        candidate: relaxed, relaxed: true, unreadable: unreadable.length };
+    }
     return { ...base, code: 'UNSUPPORTED_BUILD', title: `QQ 版本 ${versions} 尚未适配`,
-      detail: `原生接入按 QQ 的 wrapper.node 精确识别，目前随包支持 ${SUPPORTED_QQ_VERSIONS.join(' / ')}。版本不对时不会强行注入，以免把 QQ 弄坏。`,
-      hint: '两条路：装回受支持的 QQ 版本；或等这一版适配后再连。适配记录写在资源目录的 QQ 兼容说明里。',
+      detail: `原生接入按 QQ 的 wrapper.node 精确识别，目前随包支持 ${SUPPORTED_QQ_VERSIONS.join(' / ')}；也没有找到可直接尝试的 QQ.exe 进程。`,
+      hint: '装回受支持的 QQ 版本，或以普通权限启动 QQ 后再扫描。',
       candidate: null, unreadable: unreadable.length };
   }
   if (hostLoaded) {

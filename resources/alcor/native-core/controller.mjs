@@ -66,6 +66,7 @@ export class NativeController {
         const relaxable=allowUnverified===true&&row.reason==='UNSUPPORTED_BUILD'&&typeof row.path==='string'&&/[\\/]QQ\.exe$/i.test(row.path);
         if(!relaxable)throw new Error('UNSUPPORTED_QQ');
         this.lastError='UNVERIFIED_BUILD_ATTEMPT';
+      this.lastUnverified = { version: row.version || '', sha256: row.sha256 || '', at: Date.now() };
       }
       const creation=/^[1-9]\d{16,18}$/.test(row.creationTime||'')?row.creationTime:null;
       if(startedAt&&creation!==startedAt)throw new Error('NATIVE_PROCESS_CHANGED');

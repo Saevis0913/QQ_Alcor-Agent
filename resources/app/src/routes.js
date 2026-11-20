@@ -166,7 +166,7 @@ export function createRoutes(deps) {
 
     if (verdict.code === 'ELEVATION_MISMATCH') { push('elevation', 'QQ 与 Alcor 权限不一致，需要统一权限后重开', 'manual'); return { code: 'ELEVATION_MISMATCH', steps, canRelaunchAdmin: true }; }
     if (verdict.code === 'SESSION_MISMATCH') { push('session', 'QQ 与 Alcor 不在同一个 Windows 会话', 'manual'); return { code: 'SESSION_MISMATCH', steps }; }
-    if (verdict.code === 'UNSUPPORTED_BUILD' && !allowUnverified) { push('build', '当前 QQ 构建未适配，可以选「仍然尝试注入」', 'manual'); return { code: 'UNSUPPORTED_BUILD', steps, needConsent: true }; }
+    if ((verdict.code === 'UNSUPPORTED_BUILD' || verdict.code === 'QQ_BUILD_UNLISTED') && !allowUnverified) { push('build', '当前 QQ 构建未登记，可以选「仍然尝试注入」试一次', 'manual'); return { code: verdict.code, steps, needConsent: true }; }
     if (verdict.code === 'HOST_PRESENT') {
       push('host', '宿主还在 QQ 里，等它自己接回来（最多 30 秒）', 'running');
       await wait(30_000);
@@ -177,7 +177,11 @@ export function createRoutes(deps) {
 
     const pid = Number(verdict.candidate?.pid) || null;
     if (!pid) { push('connect', '没有可连接的 QQ 进程（' + verdict.code + '）', 'manual'); return { code: verdict.code, steps }; }
-    const retryable = new Set(['HOST_ENTRY_FAILED', 'HOST_THREAD_PENDING', 'HOST_LOADER_TIMEOUT', 'HOST_START_INCOMPLETE', 'NATIVE_CONNECT_FAILED']);
+    const retryable = new Set(['HOST_ENTRY_FAILED', 'HOST_THREAD_PENDING', 'HOST_LOADER_TIMEOUT', 'HOST_START_INCOMPLETE', 'NATIVE_CONNECT_FAILED', 'HOST_ALREADY_PRESENT', 'HOST_REFERENCE_STUCK']);
+    const needsCleanQQ = new Set(['HOST_ALREADY_PRESENT', 'HOST_REFERENCE_STUCK']);
+    const listProcesses = async () => {
+      try { const r = await deps.alcorManage('processes'); return Array.isArray(r.body?.processes) ? r.body.processes : []; } catch { return []; }
+    };
     for (let attempt = 1; attempt <= 3; attempt++) {
       const result = await deps.alcorManage('native/connect', { method: 'POST', body: { pid, ...(allowUnverified ? { allowUnverified: true } : {}) }, timeoutMs: 90_000 });
       const wording = result.body?.wording || result.body?.error || '';
@@ -185,6 +189,13 @@ export function createRoutes(deps) {
       if (ok) { push('connect', '第 ' + attempt + ' 次就注入成功（PID ' + pid + '）', 'ok'); return { code: 'CONNECTED', steps, connection: result.body?.data || result.body || null, pid }; }
       push('connect', '第 ' + attempt + ' 次失败：' + (wording || '未知原因'), attempt < 3 && retryable.has(String(wording)) ? 'retry' : 'error');
       if (!retryable.has(String(wording))) break;
+      if (needsCleanQQ.has(String(wording))) {
+        push('clean', '先把 QQ 关干净再重开，清掉驻留的旧模块', 'running');
+        const restarted = await restartQQ({ listProcesses });
+        push('clean', restarted.ok ? 'QQ 已重新启动，继续尝试注入' : ('重启 QQ 没成功：' + (restarted.error || restarted.code)), restarted.ok ? 'ok' : 'manual');
+        if (!restarted.ok) break;
+        await wait(10_000);
+      }
       await wait(1200 * attempt);
     }
     return { code: 'CONNECT_FAILED', steps };

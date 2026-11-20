@@ -8,6 +8,7 @@
     READY_TO_CONNECT: '可以连接',
     NO_QQ_RUNNING: 'QQ 没在运行',
     UNSUPPORTED_BUILD: 'QQ 版本未适配',
+    QQ_BUILD_UNLISTED: 'QQ 未登记可试',
     HOST_PRESENT: '宿主残留',
     FOREIGN_MODULES: '其它框架残留',
     PROCESS_UNREADABLE: '读不到 QQ',
