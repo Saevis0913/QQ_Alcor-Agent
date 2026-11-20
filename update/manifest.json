@@ -1,17 +1,17 @@
 {
   "product": "Alcor Agent",
-  "latest": "0.3.1",
+  "latest": "0.3.2",
   "minSupported": "0.2.0",
   "applyMode": "restart",
-  "notes": "0.3.1：获取更新改成多源清单（9 条通路，内置于程序内），按版本号挑最新而不是谁先返回（CDN 缓存不会盖住新版本），小版本检测到即自动下载安装，装不上时改由已配置的模型给出下载地址兜底。",
-  "publishedAt": "2026-11-20T14:52:30.110Z",
+  "notes": "0.3.2 修复「装好了双击闪退 / 事件日志 0x80000003」：内置 VC++ 运行库（缺运行库的机器不再秒退）；启动即开崩溃转储（data/crash-dumps），闪退能拿到 dump；上次没走到就绪就自动进安全模式（关显卡加速与沙箱）重试；启动前清掉全局 ELECTRON_RUN_AS_NODE / NODE_OPTIONS；Start-Alcor-Agent.cmd 失败时会回退安全模式并打印诊断日志；新增「收集崩溃信息.cmd」一键生成上报表。更新通道改为预发行，不再占仓库首页 Releases 位。",
+  "publishedAt": "2026-11-20T15:05:36.655Z",
   "rollout": 100,
   "full": {
     "urls": [
-      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.1-x64.exe"
+      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.2-x64.exe"
     ],
-    "bytes": 319447171,
-    "sha256": "df15f1aa4685f15b7c87a9074561e9dbb2d66a95255ab44b0d4c612070a7041d",
-    "fileName": "Alcor-Agent-Setup-0.3.1-x64.exe"
+    "bytes": 319605052,
+    "sha256": "ce264b58e2bbfdc8c64dd8eb5a14ee092e93e6723bc88c6becbda240a072d870",
+    "fileName": "Alcor-Agent-Setup-0.3.2-x64.exe"
   }
 }
