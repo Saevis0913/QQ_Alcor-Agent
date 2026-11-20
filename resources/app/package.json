@@ -1,6 +1,6 @@
 {
   "name": "alcor-agent",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": false,
   "description": "Alcor Agent：基于 QQ Agent 开发，适配 Alcor 原生框架",
   "type": "module",

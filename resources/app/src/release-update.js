@@ -41,7 +41,7 @@ function githubRepository(value) {
   const match = /^\/([a-z0-9][a-z0-9-]{0,38})\/([a-z0-9][a-z0-9_.-]{0,99})\/?$/i.exec(url.pathname);
   if (!match) return null;
   const slug = match.slice(1).join('/');
-  return { url: 'https://github.com/' + slug, endpoint: 'https://api.github.com/repos/' + slug + '/releases/latest' };
+  return { url: 'https://github.com/' + slug, endpoint: 'https://api.github.com/repos/' + slug + '/releases?per_page=30' };
 }
 
 export function releaseProjectUrl() {
@@ -49,21 +49,31 @@ export function releaseProjectUrl() {
   catch { return ''; }
 }
 
-function githubManifest(release, project, standard) {
-  const tag = release?.tag_name;
-  if (typeof tag !== 'string' || release.draft !== false || release.prerelease !== false || version(tag).pre.length ||
-      !Array.isArray(release.assets)) throw Error('UPDATE_MANIFEST_INVALID');
-  const latest = tag.replace(/^v/, '');
+function githubManifest(releases, project, standard) {
+  // 滚动 release（v0.3-latest 之类）被标成预发行，否则会占用仓库首页的 Releases 位；
+  // 所以这里不看 latest 接口，而是把发行列表拉下来，按资产文件名里的版本号挑最高的一份。
+  if (!Array.isArray(releases)) throw Error('UPDATE_MANIFEST_INVALID');
   const edition = standard ? 'Alcor-Agent-OneBot' : 'Alcor-Agent';
-  const filename = `${edition}-Setup-${latest}-x64.exe`;
-  const asset = release.assets.find(item => item?.name === filename);
-  // 资产已登记但还没传完（GitHub 显示 starter）：这不是配置错误，稍后重试即可。
-  if (asset && asset.state !== 'uploaded') throw Error('UPDATE_RELEASE_PENDING');
-  const url = httpsUrl(asset?.browser_download_url);
-  const expected = project.url + '/releases/download/' + encodeURIComponent(tag) + '/' + encodeURIComponent(filename);
+  const pattern = new RegExp('^' + edition + '-Setup-(\\d+\\.\\d+\\.\\d+)-x64\\.exe$');
+  let best = null;
+  for (const release of releases) {
+    if (!release || release.draft !== false || !Array.isArray(release.assets)) continue;
+    for (const asset of release.assets) {
+      const match = pattern.exec(String(asset?.name || ''));
+      if (!match) continue;
+      if (asset.state !== 'uploaded') continue;
+      const candidate = { version: match[1], fileName: asset.name, tag: release.tag_name, release };
+      if (!best || newer(version(candidate.version), version(best.version))) best = candidate;
+    }
+  }
+  if (!best) throw Error('UPDATE_NO_STABLE_RELEASE');
+  const url = httpsUrl(best.release.assets.find(item => item?.name === best.fileName)?.browser_download_url);
+  const expected = project.url + '/releases/download/' + encodeURIComponent(best.tag) + '/' + encodeURIComponent(best.fileName);
   if (url !== expected) throw Error('UPDATE_MANIFEST_INVALID');
-  return { product: 'Alcor Agent', version: latest, url, notes: release.body, publishedAt: release.published_at };
+  return { product: 'Alcor Agent', version: best.version, url, notes: best.release.body, publishedAt: best.release.published_at };
 }
+
+export function updateCallSites() { /* 占位，无副作用 */ }
 
 export async function checkReleaseUpdate(current,{source=releaseSource(),fetchBinary=safeFetchBinary,standard=true}={}){
   let base={current,configured:Boolean(source),hasUpdate:false,channel:'alcor'};
@@ -72,16 +82,18 @@ export async function checkReleaseUpdate(current,{source=releaseSource(),fetchBi
     const sourceUrl=httpsUrl(source),installed=version(current);
     const github = githubRepository(sourceUrl);
     if (github) base = { ...base, projectUrl: github.url };
+    // 发行列表比单份清单大得多（仓库里有多个 release 时到几十 KB 以上），单独给大一点的额度。
+    const limit = github ? 524288 : 65536;
     let buffer;
     try {
-      ({buffer}=await fetchBinary(github?.endpoint || sourceUrl,65536,{httpsOnly:true,publicOnly:true,timeoutMs:8000,maxRedirects:github ? 0 : 3}));
+      ({buffer}=await fetchBinary(github?.endpoint || sourceUrl,limit,{httpsOnly:true,publicOnly:true,timeoutMs:8000,maxRedirects:github ? 0 : 3}));
     } catch (error) {
       if (github && error?.status === 404) {
         return { ...base, ok: false, code: 'UPDATE_NO_STABLE_RELEASE', error: '暂未找到可公开读取的正式版本。' };
       }
       return {...base,ok:false,code:'UPDATE_CHECK_FAILED',error:'暂时无法获取更新信息，请稍后重试。'};
     }
-    if(!buffer?.length||buffer.length>=65536)throw Error('UPDATE_MANIFEST_INVALID');
+    if(!buffer?.length||buffer.length>=limit)throw Error('UPDATE_MANIFEST_INVALID');
     const payload = JSON.parse(buffer.toString('utf8'));
     const manifest = github ? githubManifest(payload, github, standard) : payload;
     if(manifest?.product!=='Alcor Agent')throw Error('UPDATE_MANIFEST_INVALID');

@@ -292,54 +292,89 @@ export async function checkForUpdate({ current, standard = false } = {}) {
   const currentVersion = String(current || state.current || '');
   const common = { ...state, checkedAt: new Date().toISOString(), current: currentVersion, error: '' };
 
-  // 1) 多源清单：raw / jsDelivr / Pages / 自定义镜像同时打，谁先返回用谁。
+  // 1) 先打多源清单（raw / jsDelivr / Pages / 自定义镜像），它没给出新版本时再问 GitHub Releases API。
+  //    不并行：清单要同时打 9 个源，并行去挤 Releases API 会触发读取并发上限（READ_BUSY），
+  //    兜底通道反而先失败 —— 而兜底正是「CDN 缓存了旧版本」时唯一能报出新版本的通道。
+  let manifest = null;
+  const errors = [];
   try {
-    const manifest = await fetchManifest();
-    const hasUpdate = compareVersion(manifest.latest, currentVersion) > 0;
-    const keepReady = hasUpdate && state.phase === 'ready' && state.latest === manifest.latest && state.readyPath;
+    manifest = await fetchManifest();
+  } catch (error) {
+    errors.push(String(error?.detail || error?.code || error?.message || ''));
+  }
+  let release = null;
+  const manifestSaysUpdate = Boolean(manifest && compareVersion(manifest.latest, currentVersion) > 0);
+  if (!manifestSaysUpdate) {
+    try {
+      const result = await checkReleaseUpdate(currentVersion, { standard });
+      if (result?.ok) release = result;
+      else errors.push(String(result?.detail || result?.code || ''));
+    } catch (error) {
+      errors.push(String(error?.code || error?.message || ''));
+    }
+  }
+  const manifestOk = Boolean(manifest);
+  const releaseOk = Boolean(release?.ok);
+  if (manifestOk || releaseOk) {
+    // 谁报的版本高用谁；版本相同优先清单（清单带 sha256，校验更严）。
+    const useRelease = releaseOk && (!manifestOk || compareVersion(release.latest || '0.0.0', manifest.latest) > 0);
+    const latest = useRelease ? String(release.latest || '') : String(manifest.latest || '');
+    const hasUpdate = compareVersion(latest, currentVersion) > 0;
+    const keepReady = hasUpdate && state.phase === 'ready' && state.latest === latest && state.readyPath;
+    const urls = useRelease
+      ? (release.url ? [release.url] : [])
+      : (Array.isArray(manifest.urls) ? manifest.urls : []);
     state = {
       ...common,
       ok: true,
       code: '',
-      latest: manifest.latest,
+      latest,
       hasUpdate,
-      notes: manifest.notes,
-      publishedAt: manifest.publishedAt,
-      source: manifest.source,
-      urls: manifest.urls,
-      url: manifest.urls[0],
-      sha256: manifest.sha256,
-      bytes: manifest.bytes,
-      fileName: manifest.fileName,
-      applyMode: manifest.applyMode,
-      minSupported: manifest.minSupported,
+      notes: useRelease ? (release.notes || '') : (manifest.notes || ''),
+      publishedAt: (useRelease ? release.publishedAt : manifest.publishedAt) || null,
+      projectUrl: (useRelease ? release.projectUrl : '') || state.projectUrl || '',
+      source: useRelease ? 'github-api' : manifest.source,
+      staleSource: useRelease && manifestOk ? manifest.source : '',
+      urls,
+      url: urls[0] || '',
+      sha256: useRelease ? '' : manifest.sha256,
+      bytes: useRelease ? 0 : manifest.bytes,
+      fileName: (useRelease ? (urls[0] ? path.basename(new URL(urls[0]).pathname) : '') : manifest.fileName) || '',
+      applyMode: (useRelease ? 'restart' : manifest.applyMode) || 'restart',
+      minSupported: useRelease ? '' : manifest.minSupported,
       phase: keepReady ? 'ready' : 'idle',
-      ...(keepReady ? {} : { readyPath: '', readyBytes: 0, readyHash: '', progress: 0 })
+      ...(keepReady ? {} : { readyPath: '', readyBytes: 0, readyHash: '', progress: 0 }),
+      ...(errors.length ? { detail: errors.join(' | ').slice(0, 300) } : {})
     };
     return updateState();
-  } catch (manifestError) {
-    // 2) 清单全挂时回落 GitHub Releases API：哪怕只有这一条通，也要给出提示。
-    const result = await checkReleaseUpdate(currentVersion, { standard });
-    const hasUpdate = Boolean(result.ok && result.hasUpdate);
+  }
+
+  // 2) 两条通道都挂：把两边的原因都带上，界面据此提示（联网了却拿不到更新时能看出卡在哪）。
+  {
+    const result = release || {};
     state = {
       ...common,
-      ok: Boolean(result.ok),
-      code: result.code || '',
-      latest: result.latest || '',
-      hasUpdate,
-      notes: result.notes || '',
-      publishedAt: result.publishedAt || null,
+      ok: false,
+      code: result.code || 'UPDATE_ALL_SOURCES_FAILED',
+      latest: '',
+      hasUpdate: false,
+      notes: '',
+      publishedAt: null,
       projectUrl: result.projectUrl || '',
-      error: result.ok ? '' : (result.error || ''),
-      source: result.ok ? 'github-api' : '',
-      urls: result.ok && result.url ? [result.url] : [],
-      ...(result.ok && result.url ? { url: result.url, fileName: path.basename(new URL(result.url).pathname) } : { url: '', fileName: '' }),
+      error: result.error || '',
+      source: '',
+      urls: [],
+      url: '',
+      fileName: '',
       sha256: '',
       bytes: 0,
       applyMode: 'restart',
-      phase: hasUpdate ? 'idle' : 'idle',
-      ...(hasUpdate ? {} : { readyPath: '', readyBytes: 0, readyHash: '', progress: 0 }),
-      ...(manifestError ? { detail: String(manifestError?.detail || manifestError?.code || manifestError?.message || '').slice(0, 300) } : {})
+      phase: 'idle',
+      readyPath: '',
+      readyBytes: 0,
+      readyHash: '',
+      progress: 0,
+      detail: errors.join(' | ').slice(0, 300)
     };
     return updateState();
   }

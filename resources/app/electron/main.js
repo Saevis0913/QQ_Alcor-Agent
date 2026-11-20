@@ -1,11 +1,21 @@
 // Electron 桌面壳：启动核心服务器（同一进程），打开会话式控制台窗口。
 // 傻瓜式：托盘常驻、关窗不退出、可选开机自启。
-import { app, BrowserWindow, Tray, Menu, nativeImage, session, shell, dialog, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, session, shell, dialog, ipcMain, screen, crashReporter } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dataDirName, describeInstance } from '../src/profile.js';
+
+// ── 启动前的环境净化（2026-11-21）──
+// 用户机器上如果全局设了 ELECTRON_RUN_AS_NODE（某些 Node 工具、旧安装脚本会写进系统环境），
+// 双击本程序会以「纯 Node 模式」启动：Electron 的 GUI 部分根本不初始化，表现就是一闪而过。
+// NODE_OPTIONS 同理（--inspect / --max-old-space-size 之类会让主进程行为异常）。
+// 这两项只在本进程内清掉，不改用户系统设置。
+for (const name of ['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS']) {
+  if (process.env[name] !== undefined) delete process.env[name];
+}
+
 
 
 // Windows 上部分显卡驱动会导致渲染进程黑屏；禁用硬件加速是最稳妥的修复
@@ -116,6 +126,43 @@ function bootDiag(msg) {
   try { fs.appendFileSync(BOOT_DIAG_FILE, `${new Date().toISOString()} ${msg}\n`); } catch { /* ignore */ }
 }
 bootDiag('main.js 已加载');
+
+// ── 崩溃取证（2026-11-21）──
+// 用户反馈「装好了但双击就闪退，事件日志里是 Alcor Agent.exe 0x80000003」：
+// 0x80000003 是调试断点异常（INT3），Chromium/V8 在致命错误、或安全软件强行终止进程时会走这条路，
+// 光看异常码无法定位。这里打开 crashpad，把 minidump 落到 data/crash-dumps，出问题直接把 dump 拿来分析。
+try {
+  crashReporter.start({
+    productName: 'Alcor Agent',
+    companyName: 'Alcor',
+    submitURL: '',
+    uploadToServer: false,
+    compress: false,
+    rateLimit: false,
+    extra: { version: app.getVersion() }
+  });
+  bootDiag('crashReporter 已启动');
+} catch (error) { bootDiag('crashReporter 启动失败: ' + (error?.message ?? error)); }
+try {
+  const dumps = fs.readdirSync(path.join(process.env.ALCOR_AGENT_DATA_DIR, 'crash-dumps')).filter((name) => /\.dmp$/i.test(name));
+  if (dumps.length) bootDiag('发现历史崩溃转储 ' + dumps.length + ' 个: ' + dumps.slice(-3).join(', '));
+} catch { /* 没有就跳过 */ }
+
+// ── 启动标记与安全模式（2026-11-21）──
+// 上次启动如果没走到「窗口与托盘就绪」就没了（闪退 / 被安全软件杀 / 主进程崩溃），
+// 这次带安全参数启动，避开最常见的显卡与沙箱问题；连续失败次数记在 crash-count.json 里给弹窗用。
+const START_MARKER = path.join(process.env.ALCOR_AGENT_DATA_DIR, '.starting');
+const CRASH_COUNT_FILE = path.join(process.env.ALCOR_AGENT_DATA_DIR, 'crash-count.json');
+let crashCount = 0;
+try { crashCount = Number(JSON.parse(fs.readFileSync(CRASH_COUNT_FILE, 'utf8')).count) || 0; } catch { crashCount = 0; }
+if (fs.existsSync(START_MARKER)) {
+  crashCount += 1;
+  bootDiag('上次启动没走到就绪（第 ' + crashCount + ' 次），本次进入安全模式');
+  for (const flag of ['disable-gpu', 'disable-gpu-compositing', 'disable-gpu-sandbox', 'no-sandbox']) app.commandLine.appendSwitch(flag);
+}
+try { fs.writeFileSync(START_MARKER, new Date().toISOString()); } catch { /* 目录不可写时后面会弹窗 */ }
+try { fs.writeFileSync(CRASH_COUNT_FILE, JSON.stringify({ count: crashCount, at: new Date().toISOString() })); } catch { /* ignore */ }
+
 
 // 单实例锁：重复启动（双击 .bat）不产生第二个实例，而是唤出已有窗口。
 // 没有锁的话第二个实例会双份连 Alcor，群消息会被双重回复。
@@ -430,6 +477,10 @@ app.whenReady().then(async () => {
     if (!hiddenVerification) applyAutoStart();
     if (!hiddenVerification) createTray();
     bootDiag('窗口与托盘就绪');
+    try {
+      fs.rmSync(START_MARKER, { force: true });
+      fs.writeFileSync(CRASH_COUNT_FILE, JSON.stringify({ count: 0, at: new Date().toISOString() }));
+    } catch { /* ignore */ }
   } catch (error) {
     console.error('[electron] 启动失败:', error);
     bootDiag('启动失败: ' + String(error?.stack ?? error));

@@ -54,8 +54,14 @@ export function manifestSources({ dir = DATA_DIR } = {}) {
   const out = [];
   const push = (url) => { if (url && !out.includes(url)) out.push(url); };
   if (custom) { try { push(httpsOnly(custom)); } catch { /* 配置坏了就跳过 */ } }
-  push(`https://raw.githubusercontent.com/${owner}/${name}/main/update/manifest.json`);
+  const rawMain = `https://raw.githubusercontent.com/${owner}/${name}/main/update/manifest.json`;
+  push(rawMain);
   push(`https://cdn.jsdelivr.net/gh/${owner}/${name}@main/update/manifest.json`);
+  push(`https://fastly.jsdelivr.net/gh/${owner}/${name}@main/update/manifest.json`);
+  push(`https://cdn.statically.io/gh/${owner}/${name}/main/update/manifest.json`);
+  push(`https://raw.gitmirror.com/${owner}/${name}/main/update/manifest.json`);
+  push(`https://gh-proxy.com/${rawMain}`);
+  push(`https://ghfast.top/${rawMain}`);
   push(`https://raw.githubusercontent.com/${owner}/${name}/master/update/manifest.json`);
   push(`https://${owner.toLowerCase()}.github.io/${name}/update/manifest.json`);
   return out;
@@ -96,16 +102,65 @@ export function normalizeManifest(raw, sourceUrl) {
 }
 
 /**
- * 同时请求所有清单地址，谁先给出合法清单就用谁。
- * 单源超时 6s，避免一条死路把整次检查拖到几十秒。
+ * 同时请求所有清单地址，收集有响应的，再挑「版本最高」的那份。
+ *
+ * 为什么要挑最高版本而不是「谁先返回」：jsDelivr / statically 这类 CDN 会缓存分支文件，
+ * 快是快，但可能还在发上一个版本；谁先返回就用谁，等于让缓存把新版本盖掉。
+ * 所以先拿第一份响应当信号，再给其它源一个宽限窗口（默认 2.5s），窗口内谁的 latest 更高用谁。
  */
+const GRACE_MS = 2500;
+
+function gather(tasks, graceMs) {
+  return new Promise((resolve) => {
+    const settlements = [];
+    let pending = tasks.length;
+    let graceTimer = null;
+    let settled = false;
+    const finish = () => { if (!settled) { settled = true; if (graceTimer) clearTimeout(graceTimer); resolve(settlements); } };
+    if (!pending) return finish();
+    for (const task of tasks) {
+      task.then((value) => settlements.push({ ok: true, value }), (error) => settlements.push({ ok: false, error })).finally(() => {
+        pending -= 1;
+        if (pending === 0) return finish();
+        if (settlements.some((item) => item.ok) && !graceTimer) graceTimer = setTimeout(finish, graceMs);
+      });
+    }
+  });
+}
+
+/** 限制同时进行的请求数：全局读取并发上限是 4，9 个源一起打会有 5 个直接被判「读取任务繁忙」。 */
+function limitConcurrency(task, max) {
+  let active = 0;
+  const queue = [];
+  return (...args) => new Promise((resolve, reject) => {
+    const run = () => {
+      active += 1;
+      task(...args).then(resolve, reject).finally(() => {
+        active -= 1;
+        const next = queue.shift();
+        if (next) next();
+      });
+    };
+    if (active < max) run();
+    else queue.push(run);
+  });
+}
+
+function newestOf(settlements) {
+  let best = null;
+  for (const item of settlements) {
+    if (!item.ok) continue;
+    if (!best || compareVersion(item.value.latest, best.latest) > 0) best = item.value;
+  }
+  return best;
+}
+
 export async function fetchManifest({ dir = DATA_DIR, timeoutMs = SOURCE_TIMEOUT_MS } = {}) {
   const sources = manifestSources({ dir });
   if (!sources.length) throw Object.assign(Error('UPDATE_SOURCE_NOT_CONFIGURED'), { code: 'UPDATE_SOURCE_NOT_CONFIGURED' });
   const errors = [];
-  const round = async (source) => {
+  const round = async (source, budget) => {
     try {
-      const budget = errors.length >= sources.length ? timeoutMs * 2 : timeoutMs;
       const { buffer } = await safeFetchBinary(source, MAX_MANIFEST_BYTES, {
         httpsOnly: true, publicOnly: true, timeoutMs: budget, maxRedirects: 3
       });
@@ -116,13 +171,14 @@ export async function fetchManifest({ dir = DATA_DIR, timeoutMs = SOURCE_TIMEOUT
       throw error;
     }
   };
-  // 两轮：第一轮限时竞速；全挂时再给慢源一次机会（弱网下第一次常常只是握手慢）。
+  // 两轮：第一轮限时收集；全挂时再给慢源一次机会（弱网下第一次常常只是握手慢）。
   for (let pass = 0; pass < 2; pass++) {
-    try {
-      return await Promise.any(sources.map((source) => round(source)));
-    } catch {
-      if (pass === 0) await new Promise((resolve) => setTimeout(resolve, 400));
-    }
+    const budget = pass === 0 ? timeoutMs : timeoutMs * 2;
+    const limited = limitConcurrency((source) => round(source, budget), 4);
+    const settlements = await gather(sources.map((source) => limited(source)), GRACE_MS);
+    const best = newestOf(settlements);
+    if (best) return best;
+    if (pass === 0) await new Promise((resolve) => setTimeout(resolve, 400));
   }
   throw Object.assign(Error('UPDATE_ALL_SOURCES_FAILED'), {
     code: 'UPDATE_ALL_SOURCES_FAILED',
