@@ -1,17 +1,17 @@
 {
   "product": "Alcor Agent",
-  "latest": "0.3.1",
+  "latest": "0.3.2",
   "minSupported": "0.2.0",
   "applyMode": "restart",
-  "notes": "0.3.1 正式版：核心 0.3.1（任意 QQ 版本自适应注入）+ agent 0.3.1（首启注入检测、一键连接、搜索体检、清空细分、系统默认人设）。补丁 as.1–as.3 的修复随下一个补丁包一起发。",
-  "publishedAt": "2026-11-21T10:40:30.913Z",
+  "notes": "0.3.2 正式版（大版本）\n\n内核升级：Alcor 核心 0.2.1 → 0.3.1。任意 QQ 版本自适应注入——内建表命中零改动；未登记构建现场扫描推导 14 个 RVA，成对生成宿主 DLL 与注入器，跨进程建包互斥 + 缓存四道校验；已用 9.9.33-51802、9.9.33-52230、9.9.35-52892、9.9.36-53644、9.9.37-54395 五份真实 wrapper 验证。\n修复：① 装代理/加速器（fake-ip）时更新检测被误拦，报「域名解析到内网」；② 点更新后安装器一闪而过、版本没变（/DIR 引号被转义）；③ 发布通道上传失败会把资产清空；④ 多源清单被 CDN 旧缓存压住。安装器不再误杀正在运行的其他程序与 QQ。\n小版本提醒：后续修复以 0.3.2-as.N 补丁形式发到同一条更新通道，客户端 20 秒内可见并自动安装，不需要重新下载大版本。\n若你从 0.3.0/0.3.1 升级时出现「下载完成但安装没启动」，那是旧版本自带的安装调用缺陷：双击 data\\updates 里的安装包装一次即可，之后的小版本会自动安装。",
+  "publishedAt": "2026-11-21T11:45:32.920Z",
   "rollout": 100,
   "full": {
     "urls": [
-      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3.1/Alcor-Agent-Setup-0.3.1-x64.exe"
+      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3.2/Alcor-Agent-Setup-0.3.2-x64.exe"
     ],
-    "bytes": 319598889,
-    "sha256": "71619deb278bcb6f4a065ce4dde506c765e61cf760685142808f50df02030292",
-    "fileName": "Alcor-Agent-Setup-0.3.1-x64.exe"
+    "bytes": 319637463,
+    "sha256": "726573746e0494ef9e161b02670af051bc3e5270bba85ee466ceae3edb2af67f",
+    "fileName": "Alcor-Agent-Setup-0.3.2-x64.exe"
   }
 }
