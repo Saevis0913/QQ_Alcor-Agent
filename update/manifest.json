@@ -1,17 +1,17 @@
 {
   "product": "Alcor Agent",
-  "latest": "0.3.1-as.2",
+  "latest": "0.3.1",
   "minSupported": "0.2.0",
   "applyMode": "restart",
-  "notes": "0.3.1 兼容性补丁 2：注入改走 ASCII 中转（中文路径也能注入）；补丁版本号可被 0.3.1 用户收到；有外来框架时先给准确判定；更新安装显式指定目录；GitHub 兜底也认补丁版本。",
-  "publishedAt": "2026-11-20T16:21:30.066Z",
+  "notes": "0.3.1 正式版：核心 0.3.1（任意 QQ 版本自适应注入）+ agent 0.3.1（首启注入检测、一键连接、搜索体检、清空细分、系统默认人设）。补丁 as.1–as.3 的修复随下一个补丁包一起发。",
+  "publishedAt": "2026-11-21T10:40:30.913Z",
   "rollout": 100,
   "full": {
     "urls": [
-      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.1-as.2-x64.exe"
+      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3.1/Alcor-Agent-Setup-0.3.1-x64.exe"
     ],
-    "bytes": 319599084,
-    "sha256": "0ba5bea23fda15b985ac2700a34c998d427d3ea1cda266d85049b7288b1dcdb4",
-    "fileName": "Alcor-Agent-Setup-0.3.1-as.2-x64.exe"
+    "bytes": 319598889,
+    "sha256": "71619deb278bcb6f4a065ce4dde506c765e61cf760685142808f50df02030292",
+    "fileName": "Alcor-Agent-Setup-0.3.1-x64.exe"
   }
 }
