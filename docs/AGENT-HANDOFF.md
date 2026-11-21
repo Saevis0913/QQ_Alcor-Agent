@@ -436,3 +436,17 @@ curl -s -X POST http://127.0.0.1:5320/api/qq/autoconnect
 > 交付：仓库改动 + 同步到 `D:/Alcor` + 一段变更说明（含文件:行）。
 
 先读第 1 节确认目录，再读第 8 节定位文件，改完按第 12 节跑验证，发版按第 9 节。遇到注入问题看第 4 节，更新问题看第 5 节，安装器看第 6 节，踩坑先搜第 10 节。
+
+## 17. 当前状态快照（2026-11-21 09:55）
+
+- 现役 `D:/Alcor`：Agent `0.3.2-as.2`（FileVersion `0.3.2.2`）+ 核心 `0.3.1`，窗口/托盘/exe 图标已是新的金色星耀 A；`/api/version` = `0.3.2-as.2`，`/api/update-status` = `core 0.3.1 / hasUpdate false`。
+- 新安装包已构建但**没有上传**：`D:/Alcor-pkg/0.3.2-as.2/out/Alcor-Agent-Setup-0.3.2-as.2-x64.exe`，319,270,415 B，sha256 `13e2c90a78454e6ef454ddae56863569d42d10b0608d25c7fa1615c59635a77f`。
+- 更新通道 `v0.3-latest`（release id 453663725）里仍是**旧图标**的同版本包：资产 id 775555180，319,630,898 B，sha256 `6bcb56b0…1021`；`update/manifest.json` 仍指向它，所以已装用户不会看到更新提示（版本号没变）。
+- 为什么没上传：上行被限速到 50–190 KB/s（同一文件早些时候能跑到 5.27 MB/s），319 MB 需要一到两小时；两次传完后 GitHub 侧资产停在 `starter` 不 finalize，脚本里已含「传完才删旧资产」的保护，中断时通道保持可用。
+- 想发布这个图标包时（网络好时再跑，一条命令）：
+  ```bash
+  cd /d/Alcor-源码/Alcor-Agent/resources/app
+  GITHUB_TOKEN=<PAT> node tools/publish-update.mjs --file "D:/Alcor-pkg/0.3.2-as.2/out/Alcor-Agent-Setup-0.3.2-as.2-x64.exe" --version 0.3.2-as.2 --notes "新图标"
+  ```
+  或直接用 `D:/Alcor-work/finish-icon.mjs`（`wait` / `rename` / `sums` / `manifest` / `purge` 五步，已实测语法与顺序）。
+- 仓库 `D:/Alcor-源码/Alcor-Agent` 工作树干净，远端 `main = e881f97`。
