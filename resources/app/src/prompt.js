@@ -293,6 +293,23 @@ export function resolveContextTier({ triggerEntries = [], selfNickname = '', bot
     return Math.max(0, Number(c.allCount) || 0);
   };
 
+  // 活跃期（被 @ / 拍一拍之后的 behavior.mentionWarmMinutes 分钟）只做"同档位内的加成"：
+  //   1、2 档 → 不升档（不因为刚被叫过就接本档不该接的消息）
+  //   3  档 → 回复概率 +mentionWarmBonus 个百分点（默认 +10，0-100 制）
+  //   4  档 → 不变（本来就是全部回复）
+  // behavior.mentionWarmBoost === false 时整块失效（设置页可关）。
+  const behavior = getConfig().behavior || {};
+  const warmOn = warm === true && behavior.mentionWarmBoost !== false;
+  const rawWarmBonus = Number(behavior.mentionWarmBonus);
+  const warmBonus = Math.min(100, Math.max(0, Number.isFinite(rawWarmBonus) ? rawWarmBonus : 10));
+  // 档位值（1-4）：回复策略优先，其次 store.contextTier（与下方判定同源，供提前判定用）。
+  const tierOfConfig = () => {
+    const mode = c.replyPolicy?.mode;
+    if (mode) return ({ off: 1, mentions: 2, probability: 3, all: 4 })[mode] || 4;
+    const n = Number(c.contextTier);
+    return Number.isFinite(n) ? Math.min(4, Math.max(1, Math.round(n))) : 4;
+  };
+
   const atMeEarly = (triggerEntries || []).some((e) =>
     e && typeof e.atMe === 'boolean'
       ? e.atMe === true
@@ -309,10 +326,19 @@ export function resolveContextTier({ triggerEntries = [], selfNickname = '', bot
       return { tier: 0, count: 0, reason: '这条在跟别人说话', shouldRespond: false };
     }
     if (stickerOnly && !atMeEarly) {
-      if (warm) {
-        return { tier: 3, count: historyCount(), reason: '活跃期里的表情冒泡', shouldRespond: true };
+      // 活跃期只在 4 档直接放行；3 档交给下面的概率判定（含活跃期加成）；1/2 档不升档。
+      const tierNow = tierOfConfig();
+      if (warmOn && tierNow >= 4) {
+        return { tier: 4, count: historyCount(), reason: '活跃期里的表情冒泡（四档）', shouldRespond: true };
       }
-      return { tier: 0, count: 0, reason: '群聊表情冒泡，不接', shouldRespond: false };
+      // 3 档：不在这里下结论，落到下面的概率判定（那时才掷骰，含活跃期加成）。
+      if (!(warmOn && tierNow === 3)) {
+        return {
+          tier: 0, count: 0,
+          reason: warm ? '活跃期里的表情冒泡，当前档位不升档' : '群聊表情冒泡，不接',
+          shouldRespond: false
+        };
+      }
     }
   }
 
@@ -328,19 +354,23 @@ export function resolveContextTier({ triggerEntries = [], selfNickname = '', bot
     if (mentioned && mode !== 'off') {
       return { tier: isPrivate ? 4 : 2, count: historyCount(), reason: '被点名（策略不拦）', shouldRespond: true };
     }
-    // 档位 4 = "全部响应"：这是用户明确表达"这个会话别筛"，优先级高于
-    // 仅@/概率 这类群聊策略（因此不会再出现"四档也按 3% 概率掷骰子"）。
-    // 只有显式 off 能压过它。
-    const tierCfg = Number(c.contextTier);
-    if (mode !== 'off' && Number.isFinite(tierCfg) && tierCfg >= 4) {
-      return { tier: 4, count: historyCount(), reason: '全部响应（四档优先于策略）', shouldRespond: true };
-    }
+    // 2026-11-21：策略模式是唯一权威档位。旧版这里有一条"legacy contextTier >= 4
+    // 一律全部响应"的提前返回，会在用户选了"仅 @ / 概率回复"、而配置文件里还留着
+    // 早期滑条值 contextTier=4 时把整条策略架空 —— 表现就是"设了仅 @ 却什么都回"。
+    // 四档现在的表达方式是 replyPolicy.mode === 'all'（下面 respond 判定已覆盖），
+    // 不再需要这条隐式升档。没有 replyPolicy 的老配置照旧走滑条档位分支。
     const chance = roll == null ? Math.random() * 100 : Number(roll);
+    // 活跃期加成只作用于 3 档（概率档），单位是百分点：30% + 10 → 40%。
+    const baseProbability = Number(probability);
+    const boostedProbability = warmOn && tierOfConfig() === 3
+      ? Math.min(100, Math.max(0, (Number.isFinite(baseProbability) ? baseProbability : 0) + warmBonus))
+      : baseProbability;
+    const warmBoosted = boostedProbability !== baseProbability;
     const respond = mode === 'off' ? false
       : isPrivate ? true
-        : (mode === 'all' || (mode === 'mentions' && mentioned) || (mode === 'probability' && chance < Number(probability)));
+        : (mode === 'all' || (mode === 'mentions' && mentioned) || (mode === 'probability' && chance < boostedProbability));
     const reason = isPrivate ? (mode === 'off' ? '不回复' : '私聊消息')
-      : (({ off: '不回复', mentions: '仅回复 @ 消息', probability: `概率回复 ${probability}%`, all: '全部回复' })[mode] || '未触发');
+      : (({ off: '不回复', mentions: '仅回复 @ 消息', probability: `概率回复 ${boostedProbability}%${warmBoosted ? `（含活跃期 +${warmBonus}）` : ''}`, all: '全部回复' })[mode] || '未触发');
     return { tier: respond ? (isPrivate ? 4 : ({ mentions: 2, probability: 3, all: 4 }[mode] || 0)) : 0,
       count: respond ? historyCount() : 0, reason, shouldRespond: respond };
   }
@@ -374,7 +404,10 @@ export function resolveContextTier({ triggerEntries = [], selfNickname = '', bot
   //    是"二次抽签"，但两次共用同一个 randomPercent 阈值；预判命中实跑未命中时
   //    走"未触发"路径把消息标已读（不响应）。这是原设计，不是缺陷。
   const rollValue = roll === null || roll === undefined ? Math.random() * 100 : Number(roll);
-  const randomHit = rollValue < Math.max(0, Math.min(100, Number(c.randomPercent) || 0));
+  // 活跃期加成只作用于 3 档：randomPercent + mentionWarmBonus（百分点），其余档位原样。
+  const randomBase = Math.max(0, Math.min(100, Number(c.randomPercent) || 0));
+  const randomStrength = warmOn && tier === 3 ? Math.min(100, randomBase + warmBonus) : randomBase;
+  const randomHit = rollValue < randomStrength;
 
   // 拍一拍 = 轻量召唤：触发批里有"拍了拍我"的事件时按 1 档响应（与被艾特同级）。
   // 判定依据是 isPoke 标记 + 文本里"拍了拍 我"（后者兜底老存档里没有标记的记录）。
@@ -399,7 +432,8 @@ export function resolveContextTier({ triggerEntries = [], selfNickname = '', bot
   if (tier >= 3 && randomHit) {
     // 概率判定用 rollValue（0~100 的骰子值）与 randomPercent 比较；两条路径
     // （预判/实跑）各掷一次，reason 里带上当时的骰子值便于排查"为什么没响应"。
-    return { tier: 3, count: historyCount(), reason: `随机命中(${rollValue.toFixed(0)}%)`, shouldRespond: true };
+    const warmNote = randomStrength !== randomBase ? `（含活跃期 +${warmBonus}）` : '';
+    return { tier: 3, count: historyCount(), reason: `随机命中(${rollValue.toFixed(0)}%，阈值 ${randomStrength}%${warmNote})`, shouldRespond: true };
   }
 
   // 都没命中：不响应（调用方会把这批标记已读）

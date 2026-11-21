@@ -4,9 +4,9 @@
 [Setup]
 AppId={{67D615C6-B01A-4880-A0AE-26C0AFC01000}
 AppName=Alcor Agent
-AppVersion=0.3.2
-AppVerName=Alcor Agent 正式版 v0.3.2
-VersionInfoVersion=0.3.2.0
+AppVersion=0.3.2-as.1
+AppVerName=Alcor Agent v0.3.2-as.1（0.3.2 补丁）
+VersionInfoVersion=0.3.2.1
 AppPublisher=Alcor
 AppComments=Alcor Agent v0.3.2 · 内核升级到 0.3.1，修复更新通道与安装器问题
 DefaultDirName=D:\Alcor
@@ -19,10 +19,10 @@ WizardStyle=modern
 WizardSizePercent=115
 WizardBackColor=$F5F2F9
 UninstallDisplayIcon={app}\Alcor Agent.exe
-UninstallDisplayName=Alcor Agent v0.3.2
+UninstallDisplayName=Alcor Agent v0.3.2-as.1
 SetupIconFile=..\payload\resources\app\assets\icon.ico
 OutputDir=..\out
-OutputBaseFilename=Alcor-Agent-Setup-0.3.2-x64
+OutputBaseFilename=Alcor-Agent-Setup-0.3.2-as.1-x64
 Compression=lzma2/normal
 SolidCompression=yes
 CloseApplications=no

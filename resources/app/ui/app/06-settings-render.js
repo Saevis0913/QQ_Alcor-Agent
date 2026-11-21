@@ -947,6 +947,9 @@ return `
         <div class="field"><label>每分钟发送上限（条）</label><input type="number" id="sc-maxpermin" min="1" value="${esc(c.send?.maxPerMinute ?? 80)}" /></div>
         <div class="field"><label>每小时发送上限（条）</label><input type="number" id="sc-maxperhour" min="1" value="${esc(c.send?.maxPerHour ?? 500)}" /></div>
       </div>
+      <div class="checkbox-row"><input type="checkbox" id="sc-warm-boost" ${c.behavior?.mentionWarmBoost !== false ? 'checked' : ''} />
+        <label for="sc-warm-boost">被 @ / 拍一拍后的活跃期加成</label></div>
+      <div class="hint">开启时只做同档位内的加成：1、2 档不升档（仍按原档位判定，活跃期不会让它接本档不该接的消息）；3 档回复概率 +10 个百分点（20% → 30%）；4 档不变。活跃期时长见 config.json 的 behavior.mentionWarmMinutes（默认 8 分钟）。关闭后活跃期完全不影响判定。</div>
       <div class="hint">改动会自动保存并应用。</div>`
     })}
     ${fold({

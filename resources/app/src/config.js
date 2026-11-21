@@ -32,8 +32,10 @@ export const DEFAULT_CONFIG = {
   privatePolicy: DEFAULT_PRIVATE_POLICY,
   // 行为细节（一般不用动）：
   //   mentionWarmMinutes —— 被 @ / 拍一拍之后的"活跃期"分钟数。
-  //   活跃期不改变用户的档位设置，只是在这段时间里多听几条、给一次插话机会。
-  behavior: { mentionWarmMinutes: 8 },
+  //   mentionWarmBoost   —— 活跃期加成总开关（设置页可关；关闭后活跃期完全不影响判定）。
+  //   mentionWarmBonus   —— 3 档时的回复概率加成，单位是百分点（0-100 制，默认 +10）。
+  //   活跃期不改变用户的档位设置：1/2 档不升档、3 档概率 +mentionWarmBonus、4 档不变。
+  behavior: { mentionWarmMinutes: 8, mentionWarmBoost: true, mentionWarmBonus: 10 },
   // 自动更新：小版本（同主次版本号）默认直接下好并安装，用户不用点按钮。
   //   原域名/镜像全部失败时会回落 GitHub Releases API，再失败走模型给出的直链。
   update: { autoInstall: true },

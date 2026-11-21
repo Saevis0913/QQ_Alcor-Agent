@@ -1464,6 +1464,9 @@ async function saveConfig({ quiet = false } = {}) {
     };
     patch.wakeDelayMs = Number(val('#sc-wakedelay', c.wakeDelayMs)) || 2000;
     patch.drainDelayMs = Number(val('#sc-draindelay', c.drainDelayMs)) || 1200;
+    // 活跃期加成开关：默认开；关闭后 @ / 拍一拍不再改变任何会话的判定。
+    // mentionWarmMinutes / mentionWarmBonus 不在这里写，展开旧值避免被默认值覆盖。
+    patch.behavior = { ...(c.behavior || {}), mentionWarmBoost: chk('#sc-warm-boost', c.behavior?.mentionWarmBoost !== false) };
     patch.maxConcurrentRuns = Math.min(8, Math.max(1, Number(val('#sc-maxruns', c.maxConcurrentRuns)) || 2));
     patch.sessionRetryAttempts = Math.min(5, Math.max(0, Number(val('#sc-sessionretry', c.sessionRetryAttempts ?? 2)) || 0));
     patch.send = {

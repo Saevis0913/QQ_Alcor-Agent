@@ -304,8 +304,12 @@ export class Orchestrator {
    * 活跃模式：取某个会话的活跃期状态；到期/开关关闭时清理并返回 null。
    * 返回 { topic, until } 或 null。
    */
-  /** 这个会话是否处在"刚被 @ 过"的活跃期。 */
+  /** 这个会话是否处在"刚被 @ 过"的活跃期（behavior.mentionWarmBoost 关闭时恒为 false）。 */
   #isWarm(chatKey) {
+    if (getConfig().behavior?.mentionWarmBoost === false) {
+      if (this.warmUntil.size) this.warmUntil.clear();
+      return false;
+    }
     const until = Number(this.warmUntil.get(chatKey) || 0);
     if (until > Date.now()) return true;
     if (until) this.warmUntil.delete(chatKey);
@@ -314,6 +318,7 @@ export class Orchestrator {
 
   /** 记录一次"被叫到"：默认 8 分钟（5–10 分钟的中值），可用 behavior.mentionWarmMinutes 覆盖。 */
   #markWarm(chatKey) {
+    if (getConfig().behavior?.mentionWarmBoost === false) return;
     const minutes = Number(getConfig().behavior?.mentionWarmMinutes);
     const span = (Number.isFinite(minutes) && minutes > 0 ? Math.min(30, minutes) : 8) * 60_000;
     this.warmUntil.set(chatKey, Date.now() + span);
