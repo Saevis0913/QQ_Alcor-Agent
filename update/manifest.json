@@ -1,17 +1,17 @@
 {
   "product": "Alcor Agent",
-  "latest": "0.3.2-as.1",
+  "latest": "0.3.2-as.2",
   "minSupported": "0.2.0",
   "applyMode": "restart",
-  "notes": "0.3.2-as.1 小版本（0.3.2 补丁）\n\n被 @ 或拍一拍后的八分钟活跃期不再“什么都回”。规则改为：回复档位是一档、二档时不升档；三档时回复概率 +10 个百分点（20% → 30%，单位就是 randomPercent 那套 0–100，不是乘 1.1）；四档本来就是全部回复，保持不变。设置里新增开关「被 @ / 拍一拍后的活跃期加成」（聊天设置 → 模型运行与消息发送），关掉后活跃期既不记时也不加成。\n\n同时修掉一个把策略架空的老问题：旧配置里遗留的四档（contextTier=4）会压过界面上的回复策略，让一/二/三档也变成“全部响应”。现在界面选的策略就是唯一档位，四档只由回复策略里的“全部”表达。\n\n安装位置不变，核心随包；从 0.3.2 升级会自动装，装完版本号变 0.3.2-as.1，核心仍是 0.3.1。",
-  "publishedAt": "2026-11-21T12:08:50.207Z",
+  "notes": "0.3.2-as.2 小版本（0.3.2 补丁）\n\n自动更新装完会自己重新打开：以前静默安装结束后程序不回来，要手动再点一次；现在安装器在「目录里已有程序」的静默升级结束时自动启动新版本，安装命令同时带 /RELAUNCH=1 作双保险。\n更新检查从 6 小时一次改成 30 分钟一次：万一某个 CDN 把清单缓存成旧版本，最多半小时就会自己补上。\n包含 as.1 的内容：被 @ / 拍一拍后的八分钟活跃期加成（一/二档不升档、三档回复概率 +10 个百分点、四档不变），设置里可以关。\n从 0.3.2 或 0.3.2-as.1 都会自动升到 0.3.2-as.2，装完自动回到界面；核心仍是 0.3.1。",
+  "publishedAt": "2026-11-21T12:45:08.196Z",
   "rollout": 100,
   "full": {
     "urls": [
-      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.2-as.1-x64.exe"
+      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.2-as.2-x64.exe"
     ],
-    "bytes": 319631700,
-    "sha256": "5f750582ebf96d1008e8beb76952089b406fc9a584a29ee973d922e2b6e118fe",
-    "fileName": "Alcor-Agent-Setup-0.3.2-as.1-x64.exe"
+    "bytes": 319630898,
+    "sha256": "6bcb56b0a73435cadaa158e6abecc9ae23a35e2e275aa29633ec4aa4321a1021",
+    "fileName": "Alcor-Agent-Setup-0.3.2-as.2-x64.exe"
   }
 }
