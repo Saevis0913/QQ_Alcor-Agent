@@ -16,6 +16,18 @@ const MAX_MANIFEST_BYTES = 262144;
 const SOURCE_TIMEOUT_MS = 6000;
 const DEFAULT_REPO = 'Saevis0913/QQ_Alcor-Agent';
 
+// 更新清单只走程序内置的这几条通路，主机名是常量，不是用户或模型给的链接。
+// 代理软件的 fake-ip 模式（Clash 等把域名解析到 198.18.x.x / fc00::）下，
+// 私有地址拦截会把所有更新源一起挡死，所以这几家允许走 fake-ip。
+const TRUSTED_UPDATE_HOSTS = new Set([
+  'github.com', 'api.github.com', 'raw.githubusercontent.com',
+  'cdn.jsdelivr.net', 'fastly.jsdelivr.net', 'cdn.statically.io',
+  'raw.gitmirror.com', 'gh-proxy.com', 'ghfast.top',
+  'objects.githubusercontent.com', 'release-assets.githubusercontent.com',
+  'github-releases.githubusercontent.com',
+  'gitee.com', 'raw.gitee.com',
+]);
+
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
@@ -146,11 +158,27 @@ function limitConcurrency(task, max) {
   });
 }
 
+function manifestRank(value) {
+  const time = value && value.publishedAt ? Date.parse(value.publishedAt) : NaN;
+  return { time: Number.isFinite(time) ? time : -Infinity, version: String((value && value.latest) || '0.0.0') };
+}
+
+/**
+ * 多个源可能被 CDN 缓存成不同版本：旧缓存里「版本号更高」的补丁会把新发的正式版盖掉
+ * （实测 0.3.1-as.2 缓存压过 0.3.1 现网）。所以先比清单里的发布时间，时间缺失或相同再回落版本号。
+ */
 function newestOf(settlements) {
   let best = null;
+  let bestRank = null;
   for (const item of settlements) {
     if (!item.ok) continue;
-    if (!best || compareVersion(item.value.latest, best.latest) > 0) best = item.value;
+    const rank = manifestRank(item.value);
+    if (!best) { best = item.value; bestRank = rank; continue; }
+    if (rank.time !== bestRank.time) {
+      if (rank.time > bestRank.time) { best = item.value; bestRank = rank; }
+      continue;
+    }
+    if (compareVersion(rank.version, bestRank.version) > 0) { best = item.value; bestRank = rank; }
   }
   return best;
 }
@@ -159,10 +187,18 @@ export async function fetchManifest({ dir = DATA_DIR, timeoutMs = SOURCE_TIMEOUT
   const sources = manifestSources({ dir });
   if (!sources.length) throw Object.assign(Error('UPDATE_SOURCE_NOT_CONFIGURED'), { code: 'UPDATE_SOURCE_NOT_CONFIGURED' });
   const errors = [];
+  // 清单是每次都覆盖的同一路径，CDN 会缓存（raw 300 s、jsDelivr 12 h～7 天），
+  // 不带穿透参数就会出现「改了清单、客户端几小时看不到」，所以每次取都换一个 cache key。
+  const cacheBust = (url) => {
+    const next = new URL(url);
+    next.searchParams.set('t', String(Date.now()));
+    return next.toString();
+  };
   const round = async (source, budget) => {
     try {
-      const { buffer } = await safeFetchBinary(source, MAX_MANIFEST_BYTES, {
-        httpsOnly: true, publicOnly: true, timeoutMs: budget, maxRedirects: 3
+      const { buffer } = await safeFetchBinary(cacheBust(source), MAX_MANIFEST_BYTES, {
+        httpsOnly: true, publicOnly: true, timeoutMs: budget, maxRedirects: 3,
+        trustedHosts: TRUSTED_UPDATE_HOSTS
       });
       if (!buffer?.length) throw Error('UPDATE_MANIFEST_INVALID');
       return normalizeManifest(JSON.parse(buffer.toString('utf8')), source);

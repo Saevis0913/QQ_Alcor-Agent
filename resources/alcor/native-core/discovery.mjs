@@ -24,22 +24,34 @@ $rows=@(Get-Process QQ -ErrorAction SilentlyContinue | ForEach-Object {
       $started=$p.StartTime.ToUniversalTime()
       $names=New-Object System.Collections.ArrayList
       try { foreach($m in @($p.Modules)) { $name=[IO.Path]::GetFileName([string]$m.FileName); if($name -and -not $names.Contains($name)){[void]$names.Add($name)} } } catch {}
-      [pscustomobject]@{pid=$p.Id;path=$p.Path;moduleName=$module.ModuleName;sha256=$digest;version=$module.FileVersionInfo.FileVersion;startedAt=$started.ToString('o');creationTime=$started.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture);modules=@($names | Select-Object -First 512)}
+      [pscustomobject]@{pid=$p.Id;path=$p.Path;moduleName=$module.ModuleName;modulePath=$module.FileName;sha256=$digest;version=$module.FileVersionInfo.FileVersion;startedAt=$started.ToString('o');creationTime=$started.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture);modules=@($names | Select-Object -First 512)}
     }
   } catch { [pscustomobject]@{pid=$p.Id;reason='PROCESS_INSPECTION_UNAVAILABLE'} }
 })
 ConvertTo-Json -InputObject $rows -Depth 3 -Compress
 `;
+/* F4 修订（polish 副本）：wrapper.node 的 FileVersion 是 NTQQ 框架自身版本（实测 9.9.36-53644 的 wrapper
+   报 '9.8.0.24541'），不是 QQ 构建号；用它既会写错 profile 槽位的 version，又让 matchQQFamily(9.9.33–45)
+   永远落空。构建号以安装目录 versions\<build>\ 段为准（launcher 式与非 launcher 式安装都覆盖），
+   取不到才退回 FileVersion。 */
+export function deriveQQBuildVersion(modulePath,fileVersion){
+  if(typeof modulePath==='string'){
+    const m=/[\\/]versions[\\/]([^\\/]+)[\\/]resources[\\/]app[\\/]wrapper\.node$/i.exec(modulePath);
+    if(m&&/^\d+\.\d+\.\d+-\d+$/.test(m[1]))return m[1];
+  }
+  return typeof fileVersion==='string'&&fileVersion?fileVersion:null;
+}
 const bounded=(list,limit)=>Array.isArray(list)?list.filter(name=>typeof name==='string'&&moduleNamePattern.test(name)).slice(0,limit):[];
 export function classifyQQProcess(row){
   const isQQ=typeof row.path==='string'&&/(?:^|[\\/])QQ\.exe$/i.test(row.path);
   const profile=isQQ?findQQBuildProfile(row.moduleName,row.sha256):null;
-  const family=!profile&&isQQ?matchQQFamily(row.moduleName,row.version):null;
+  const buildVersion=deriveQQBuildVersion(row.modulePath,row.version);
+  const family=!profile&&isQQ?matchQQFamily(row.moduleName,buildVersion):null;
   const modules=bounded(row.modules,512);
   const alcorHostLoaded=modules.length?modules.some(name=>name.toLowerCase().includes(hostModule)):row.alcorHostLoaded===true;
   const foreignModules=modules.length?modules.filter(isForeignQQModule).slice(0,8):bounded(row.foreignModules,8);
   const {modules:_inventory,...rest}=row;
-  return {...rest,foreignModules,alcorHostLoaded,supported:!!profile,version:profile?.version||row.version,
+  return {...rest,foreignModules,alcorHostLoaded,supported:!!profile,version:profile?.version||buildVersion,
     verification:profile?.verification||family?.verification||null,architecture:profile?.architecture||family?.architecture||null,
     family:family?.version||null,
     reason:profile?(alcorHostLoaded?'ALCOR_HOST_PRESENT':foreignModules.length?'FOREIGN_MODULES_PRESENT':'IDENTITY_REQUIRES_CONNECTION'):(family?'FAMILY_UNVERIFIED':row.reason||'UNSUPPORTED_BUILD')};

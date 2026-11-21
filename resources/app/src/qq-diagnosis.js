@@ -73,7 +73,23 @@ const FAILURE_TEXT = {
   HOST_REFERENCE_STUCK: ['加载器引用没有释放', '注入完成后加载器没能释放对目标进程的引用，通常是 QQ 进程被挂起或调试器占用。',
     '关掉调试/注入类工具，完全退出 QQ 重开后再连。'],
   HOST_START_INCOMPLETE: ['宿主没有完成启动', '加载器返回了非零状态但没给出具体阶段（旧版加载器或异常退出）。',
-    '重启 QQ 重试；仍失败请用排查程序导出判定码与日志。']
+    '重启 QQ 重试；仍失败请用排查程序导出判定码与日志。'],
+  PROFILE_SCANNER_MISSING: ['现场适配组件缺失', 'resources/alcor/tools/qq-profile-scan.mjs 不在包里，无法为未登记的 QQ 版本推导 profile。',
+    '用安装包覆盖安装一次（覆盖安装不会动 data 目录），再重试连接。'],
+  PROFILE_SCAN_FAILED: ['现场推导 profile 失败', '离线扫描器没能从这个版本的 wrapper.node 复原出全部 RVA（构建差异超出已知锚点），没有写入任何补丁。',
+    '装回受支持的 QQ 版本（9.9.36-53644 / 9.9.37-54395），或把判定码与 data/logs 当日日志一起反馈以适配该版本。'],
+  PROFILE_SCAN_MISMATCH: ['QQ 文件在扫描前后不一致', '扫描到的 wrapper.node 与进程清单里的哈希对不上，多半是 QQ 正在自动更新。',
+    '等 QQ 更新完成、完全退出 QQ（任务栏退出）重新登录后，再点「重新扫描」。'],
+  PROFILE_WRAPPER_NOT_FOUND: ['找不到 QQ 的 wrapper.node', '按 QQ.exe 的位置推导 resources/app/wrapper.node 时文件不存在，QQ 安装可能不完整。',
+    '用 QQ 官方安装包修复安装，完全退出 QQ 重新登录后再试。'],
+  PROFILE_VERSION_UNSUPPORTED: ['QQ 版本号无法登记', '现场推导拿到的版本标识不符合 profile 表位格式（超长或含非法字符），已放弃生成补丁包。',
+    '把判定码与 QQ 版本号一起反馈；可先用受支持的 QQ 版本。'],
+  PROFILE_PATCH_FAILED: ['生成配对补丁包失败', '把新 profile 写入 loader/DLL 表位时发现结构与预期不符，已放弃写入、未改动随包文件。',
+    '把判定码与 data/logs 当日日志一起反馈；可先用受支持的 QQ 版本。'],
+  PROFILE_VERIFY_FAILED: ['补丁包自检未通过', '生成的 loader/DLL 配对包在回读校验时不一致，已整体丢弃、未用于注入。',
+    '重试一次连接；反复出现请把判定码与日志反馈。'],
+  PROFILE_PACK_FAILED: ['补丁包写入失败', '生成补丁包目录时发生 I/O 错误（权限不足、杀软拦截或磁盘问题），半成品已清理。',
+    '把 Alcor 安装目录与 ProgramData\\Alcor 加入杀软白名单后重试。']
 };
 
 export function describeQQFailure(lastFailure) {
@@ -164,7 +180,7 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
         detail: family
           ? `这一版 QQ（PID ${relaxed.pid}）属于 ${relaxed.family || relaxed.version} 这一代，随包只对 ${SUPPORTED_QQ_VERSIONS.join(' / ')} 做过逐字节验证，所以没有「已验证」保证。`
           : `这一版 QQ（PID ${relaxed.pid}）的 wrapper.node 不在随包名单里（已适配 ${SUPPORTED_QQ_VERSIONS.join(' / ')}），所以没有「已验证」保证。`,
-        hint: '点「仍然尝试注入」会用兼容模式试一次：注入失败会自动重启 QQ 恢复原状，不会把 QQ 弄坏。',
+        hint: '点「仍然尝试注入」会先为这个构建现场推导 profile、生成成对的 loader/DLL 补丁包再注入；注入失败时 QQ 可能停在半注入状态，请点「重启 QQ」按钮恢复后再试，不会把 QQ 弄坏。',
         candidate: relaxed, relaxed: true, unreadable: unreadable.length };
     }
     return { ...base, code: 'UNSUPPORTED_BUILD', title: `QQ 版本 ${versions} 尚未适配`,

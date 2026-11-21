@@ -59,7 +59,7 @@
     if (!status || !status.hasUpdate) { hide(); return; }
     const phase = status.phase || 'idle';
     const latest = status.latest ? `v${status.latest}` : '新版本';
-    const current = status.current ? `当前 v${status.current}` : '';
+    const current = status.current ? `当前 v${status.current}${status.core ? ` / 核心 ${status.core}` : ''}` : '';
     let detail = '';
     let action = '';
     if (phase === 'downloading') {

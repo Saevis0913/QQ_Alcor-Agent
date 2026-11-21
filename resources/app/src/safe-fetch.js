@@ -115,7 +115,20 @@ async function lookupWithTimeout(hostname) {
   return Promise.race([dnsLookup(hostname, { all: true, verbatim: true }), timeout]).finally(() => clearTimeout(timer));
 }
 
-async function resolveSafeHost(hostname, { allowPrivate = false } = {}) {
+// 代理软件的 fake-ip 模式（Clash/Surge 等）会把域名解析到 198.18.0.0/15 或 fc00::/7，
+// 真实连接由本机代理转发。更新清单的主机是程序内置常量，允许在这两个段上放行，
+// 否则「装了代理就再也拿不到更新」。
+function isFakeIp(address) {
+  const h = String(address || '').toLowerCase();
+  if (net.isIP(h) === 4) {
+    const m = h.match(/^198\.(\d+)\./);
+    return Boolean(m) && Number(m[1]) >= 18 && Number(m[1]) <= 19;
+  }
+  if (net.isIP(h) === 6) return h.startsWith('fc') || h.startsWith('fd');
+  return false;
+}
+
+async function resolveSafeHost(hostname, { allowPrivate = false, trustedHosts = null } = {}) {
   const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (!h) throw new Error('主机名为空');
   if (!allowPrivate && (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local'))) {
@@ -133,15 +146,18 @@ async function resolveSafeHost(hostname, { allowPrivate = false } = {}) {
   }
   if (!addresses.length) throw new Error('域名没有解析结果');
   if (!allowPrivate) {
+    const trusted = trustedHosts instanceof Set ? trustedHosts.has(h) : Array.isArray(trustedHosts) && trustedHosts.includes(h);
     for (const { address } of addresses) {
-      if (isPrivateIp(address)) throw new Error('域名解析到内网/本机地址，已阻止');
+      if (!isPrivateIp(address)) continue;
+      if (trusted && isFakeIp(address)) continue;
+      throw new Error('域名解析到内网/本机地址，已阻止');
     }
   }
   return addresses[0].address;
 }
 
 /** 校验 URL 的 scheme 与主机（DNS 级）。返回 { url, ip }。 */
-export async function validateFetchUrl(raw, { allowPrivate = false } = {}) {
+export async function validateFetchUrl(raw, { allowPrivate = false, trustedHosts = null } = {}) {
   let url;
   try {
     url = new URL(String(raw ?? '').trim());
@@ -150,7 +166,7 @@ export async function validateFetchUrl(raw, { allowPrivate = false } = {}) {
   }
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('仅允许 http/https');
   if (url.username || url.password) throw new Error('URL 不能包含凭据');
-  const ip = await resolveSafeHost(url.hostname, { allowPrivate });
+  const ip = await resolveSafeHost(url.hostname, { allowPrivate, trustedHosts });
   return { url, ip };
 }
 
@@ -380,7 +396,7 @@ export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, {
 }
 async function safeFetchBinaryOnce(urlString, maxBytes, {
   browseLocked = false, publicOnly = false, httpsOnly = false, timeoutMs, maxRedirects = MAX_REDIRECTS,
-  signal: cancellation, acceptGzip = false, onProgress
+  signal: cancellation, acceptGzip = false, onProgress, trustedHosts = null
 } = {}, destination) {
   const lock = browseLocked ? checkBrowseLock(urlString) : { enabled: false, allowed: true, host: '' };
   if (!lock.allowed) throw new Error(`浏览锁定：${lock.host || '该地址'} 不在允许的域名清单内`);
@@ -388,7 +404,7 @@ async function safeFetchBinaryOnce(urlString, maxBytes, {
   const timeout = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined;
   const signal = timeout && cancellation ? AbortSignal.any([timeout, cancellation]) : timeout || cancellation;
   signal?.throwIfAborted();
-  let { url, ip } = await waitForRead(validateFetchUrl(urlString, { allowPrivate }), signal);
+  let { url, ip } = await waitForRead(validateFetchUrl(urlString, { allowPrivate, trustedHosts }), signal);
   for (let i = 0; i <= maxRedirects; i++) {
     signal?.throwIfAborted();
     if (browseLocked && !checkBrowseLock(url.href).allowed) throw new Error('浏览锁定：当前地址已不在允许清单中');
@@ -403,7 +419,7 @@ async function safeFetchBinaryOnce(urlString, maxBytes, {
         const nl = checkBrowseLock(next);
         if (!nl.allowed) throw new Error(`浏览锁定：重定向目标 ${nl.host || '未知'} 不在允许的域名清单内`);
       }
-      ({ url, ip } = await waitForRead(validateFetchUrl(next, { allowPrivate }), signal));
+      ({ url, ip } = await waitForRead(validateFetchUrl(next, { allowPrivate, trustedHosts }), signal));
       continue;
     }
     if (result.statusCode !== 200) throw httpReadError(result.statusCode, result.retryAfter);

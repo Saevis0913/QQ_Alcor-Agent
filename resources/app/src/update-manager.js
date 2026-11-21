@@ -6,11 +6,19 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { DATA_DIR, getConfig } from './config.js';
 import { checkReleaseUpdate } from './release-update.js';
 import { chatCompletion } from './llm.js';
 import { fetchManifest, compareVersion, isPatchUpdate } from './update-feeds.js';
+
+/** 随包核心版本：resources/alcor/package.json。一个安装包同时携带 agent 与核心，更新时一起换。 */
+function localCoreVersion() {
+  try {
+    const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../alcor/package.json');
+    return String(JSON.parse(fs.readFileSync(file, 'utf8')).version || '');
+  } catch { return ''; }
+}
 
 const UPDATE_DIR = path.join(DATA_DIR, 'updates');
 const MAX_INSTALLER_BYTES = 520 * 1024 * 1024;
@@ -46,7 +54,9 @@ let checkTimer = null;
 let bootTimer = null;
 
 export function updateState() {
-  return { ...state };
+  return {
+    core: localCoreVersion(),
+    bundle: 'agent+core', ...state };
 }
 
 function sumFileUrl(assetUrl) {
@@ -421,6 +431,20 @@ export async function downloadUpdate() {
 }
 
 /** 启动安装器并让应用退出：安装器会等进程退出后替换文件。 */
+/** 生成 /DIR 参数：绝不能带引号，Inno 的命令行解析不认反斜杠转义的引号；
+    含空格时改用 8.3 短路径，取不到就交给安装器沿用上次目录（UsePreviousAppDir）。 */
+function installDirArg(root) {
+  if (!root) return null;
+  if (!/\s/.test(root)) return '/DIR=' + root;
+  try {
+    const out = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${root.replace(/'/g, "''")}').ShortPath`], { encoding: 'utf8', timeout: 15000, windowsHide: true });
+    const short = String(out.stdout || '').trim();
+    if (short && !/\s/.test(short) && /^[\x20-\x7e]+$/.test(short)) return '/DIR=' + short;
+  } catch { /* 取不到短路径就不传 /DIR */ }
+  return null;
+}
+
 export function installUpdate({ onQuit } = {}) {
   const file = state.readyPath;
   if (!file || !fs.existsSync(file)) throw Object.assign(Error('UPDATE_PAYLOAD_MISSING'), { code: 'UPDATE_PAYLOAD_MISSING' });
@@ -428,10 +452,16 @@ export function installUpdate({ onQuit } = {}) {
   /* 必须显式指定安装目录：Inno 会记住「上一次用过的目录」，
      不传就会把更新装到别的副本上（试过装进过验收目录），运行中的这份反而没升级。 */
   const installRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-  const child = spawn(file, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS', `/DIR="${installRoot}"`], {
+  const installLog = path.join(UPDATE_DIR, 'install.log');
+  /* 参数必须交给 cmd 原样转发：spawn 在 Windows 上会把引号转义成 \"，而 Inno 的
+     命令行解析不认反斜杠转义，会看到 /DIR=\"D:\..." 这种带引号的目录名并直接中止安装。 */
+  const args = ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS', `/LOG=${installLog}`];
+  const dirArg = installDirArg(installRoot);
+  if (dirArg) args.push(dirArg);
+  const child = spawn(file, args, {
     detached: true,
     stdio: 'ignore',
-    windowsHide: false
+    windowsHide: true
   });
   child.unref();
   setTimeout(() => {

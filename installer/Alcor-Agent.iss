@@ -4,11 +4,11 @@
 [Setup]
 AppId={{67D615C6-B01A-4880-A0AE-26C0AFC01000}
 AppName=Alcor Agent
-AppVersion=0.2.4
-AppVerName=Alcor Agent 正式版 v0.2.4
-VersionInfoVersion=0.2.4.0
+AppVersion=0.3.2
+AppVerName=Alcor Agent 正式版 v0.3.2
+VersionInfoVersion=0.3.2.0
 AppPublisher=Alcor
-AppComments=Alcor Agent 正式版 v0.2.4 · 搭载 Alcor 接入框架的 AI QQ 智能体
+AppComments=Alcor Agent v0.3.2 · 内核升级到 0.3.1，修复更新通道与安装器问题
 DefaultDirName=D:\Alcor
 DefaultGroupName=Alcor
 DisableProgramGroupPage=yes
@@ -19,10 +19,10 @@ WizardStyle=modern
 WizardSizePercent=115
 WizardBackColor=$F5F2F9
 UninstallDisplayIcon={app}\Alcor Agent.exe
-UninstallDisplayName=Alcor Agent 正式版 v0.2.4
+UninstallDisplayName=Alcor Agent v0.3.2
 SetupIconFile=..\payload\resources\app\assets\icon.ico
 OutputDir=..\out
-OutputBaseFilename=Alcor-Agent-Setup-0.2.4-x64
+OutputBaseFilename=Alcor-Agent-Setup-0.3.2-x64
 Compression=lzma2/normal
 SolidCompression=yes
 CloseApplications=no
@@ -59,6 +59,11 @@ Filename: "{app}\Alcor Agent.exe"; Description: "打开 Alcor Agent，完成首�
 
 [Code]
 
+const
+  AlcorAgentExe = 'Alcor Agent.exe';
+  AlcorLoaderRel = 'resources\alcor\artifacts\native\qq-host-loader.exe';
+  AlcorHostDllRel = 'resources\alcor\artifacts\native\alcor-host.dll';
+
 var
   EnvironmentPage: TWizardPage;
   ReportMemo: TNewMemo;
@@ -68,6 +73,7 @@ var
   CheckedDir, ReportFile: String;
   InstalledReport: String;
   InstalledPassed: Boolean;
+  StopDone: Boolean;
 
 function WindowsLines(Value: String): String;
 begin
@@ -191,39 +197,114 @@ begin
   if CurPageID = EnvironmentPage.ID then Result := CheckPassed;
 end;
 
+// ---- 升级时的进程清理：只在「真升级且关键文件被占用」时动手 ----
+// 判据是目标目录已有主程序（多副本各自判定），而不是「机器上有 QQ/loader 在跑」。
+function AppRoot(): String;
+begin
+  Result := AddBackslash(ExpandConstant('{app}'));
+end;
+
+function IsUpgradeInstall(): Boolean;
+begin
+  Result := FileExists(AppRoot() + AlcorAgentExe);
+end;
+
+// 独占打开探测文件是否被占用。探测失败一律按「被占用」处理（宁可多清理一轮，不可漏到 DeleteFile 错误码 5）。
+function IsFileLocked(FilePath: String): Boolean;
+var
+  ScriptPath, Script: String;
+  Code: Integer;
+begin
+  Result := True;
+  if not FileExists(FilePath) then begin
+    Log('StopLockingProcesses: probe target missing: ' + FilePath + ' - treat as not locked');
+    Result := False;
+    exit;
+  end;
+  ScriptPath := ExpandConstant('{tmp}\alcor-lockprobe.ps1');
+  Script := 'try { $f = [IO.File]::Open(' + #39 + FilePath + #39 + ', ' + #39 + 'Open' + #39 + ', ' + #39 + 'ReadWrite' + #39 + ', ' + #39 + 'None' + #39 + '); $f.Close(); exit 0 } catch { exit 1 }';
+  if not SaveStringToFile(ScriptPath, Script, False) then begin
+    Log('StopLockingProcesses: cannot write lock probe - assume locked');
+    exit;
+  end;
+  if Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptPath + '"', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Result := (Code <> 0)
+  else
+    Log('StopLockingProcesses: lock probe failed to start - assume locked');
+end;
+
+// runtime\alcor-runtime-<sha>.dll 文件名随内容哈希变化，无法按固定名探测；它与 alcor-host.dll 同一注入链，探测后者即可。
+function AnyKeyFileLocked(): Boolean;
+begin
+  Result := IsFileLocked(AppRoot() + AlcorAgentExe) or
+            IsFileLocked(AppRoot() + AlcorLoaderRel) or
+            IsFileLocked(AppRoot() + AlcorHostDllRel);
+end;
+
+// 只杀「镜像名匹配且可执行路径在 Root 下」的进程。
+procedure StopByPath(ExeName: String; Root: String);
+var
+  ScriptPath, Script: String;
+  Code: Integer;
+begin
+  ScriptPath := ExpandConstant('{tmp}\alcor-stop-path.ps1');
+  Script := '$root = ' + #39 + Root + #39 + #13#10 +
+            'Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq ' + #39 + ExeName + #39 + ' -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }';
+  if SaveStringToFile(ScriptPath, Script, False) then begin
+    if Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptPath + '"', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+      Log('StopLockingProcesses: path-scoped stop for ' + ExeName + ' exit=' + IntToStr(Code))
+    else
+      Log('StopLockingProcesses: path-scoped stop failed to start for ' + ExeName);
+  end else
+    Log('StopLockingProcesses: cannot write stop script for ' + ExeName);
+end;
+
 procedure StopLockingProcesses();
 var
-  Root, ScriptPath, Script: String;
+  Root: String;
   StopCode, Attempt: Integer;
+  StillLocked: Boolean;
 begin
-  Root := ExpandConstant('{app}');
+  if StopDone then exit;
+  StopDone := True;
+  Root := AppRoot();
 
-  { 宿主注入进程挂在 QQ 里，先退 }
+  if not IsUpgradeInstall() then begin
+    Log('StopLockingProcesses: fresh install to ' + Root + ' - no process cleanup');
+    exit;
+  end;
+
+  StopByPath('qq-host-loader.exe', Root);
+  StopByPath('Alcor Agent.exe', Root);
+  StopByPath('node.exe', Root);
+
+  StillLocked := AnyKeyFileLocked();
+  if not StillLocked then begin
+    Log('StopLockingProcesses: key files unlocked after scoped cleanup - QQ untouched');
+    exit;
+  end;
+
   Exec(ExpandConstant('{cmd}'), '/c taskkill /IM "qq-host-loader.exe" /F /T >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, StopCode);
-
-  { Agent 本体按镜像名杀：提升权限的实例拿不到 Path，按路径匹配会漏 }
   Exec(ExpandConstant('{cmd}'), '/c taskkill /IM "Alcor Agent.exe" /F /T >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, StopCode);
 
-  { Agent 自带的 node：只杀安装目录下的 }
-  ScriptPath := ExpandConstant('{tmp}\alcor-stop.ps1');
-  Script := '$root = ' + #39 + Root + #39 + #13#10 +
-            'Get-CimInstance Win32_Process | Where-Object { $_.Name -eq ''node.exe'' -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }' + #13#10;
-  if SaveStringToFile(ScriptPath, Script, False) then
-    Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptPath + '"', '', SW_HIDE, ewWaitUntilTerminated, StopCode);
-
-  { 旧运行库注入在 QQ 里：QQ 会自动重启，所以连试三次 }
   for Attempt := 1 to 3 do
   begin
-    if not Exec(ExpandConstant('{cmd}'), '/c tasklist /FI "IMAGENAME eq QQ.exe" /NH | find /I "QQ.exe" >nul', '', SW_HIDE, ewWaitUntilTerminated, StopCode) then Break;
-    if StopCode <> 0 then Break;
+    if not StillLocked then Break;
     if (Attempt = 1) and (not WizardSilent) then
       MsgBox('升级需要先关闭 QQ。' + #13#10#13#10 +
-             '旧版运行库注入在 QQ 进程里，锁着 resources\alcor\artifacts\native\runtime 下的 DLL。' + #13#10 +
+             '旧版运行库注入在 QQ 进程里，锁着 resources\alcor\artifacts\native 下的文件。' + #13#10 +
              '不关 QQ 就会出现「DeleteFile 失败：错误代码 5」。' + #13#10#13#10 +
              '点「确定」自动关闭 QQ；装完后请手动重新打开 QQ。', mbInformation, MB_OK);
     Exec(ExpandConstant('{cmd}'), '/c taskkill /IM QQ.exe /F /T >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, StopCode);
     Sleep(1500);
+    StillLocked := AnyKeyFileLocked();
+    if not StillLocked then Log('StopLockingProcesses: key files unlocked after QQ stop (attempt ' + IntToStr(Attempt) + ')');
   end;
+
+  if StillLocked then
+    Log('StopLockingProcesses: WARNING key files still locked - replacement may fail with code 5')
+  else
+    Log('StopLockingProcesses: finished, key files unlocked');
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

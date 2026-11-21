@@ -35,12 +35,15 @@ if (!fs.existsSync(file)) {
   console.error('找不到安装包：' + file);
   process.exit(2);
 }
-if (!/^\d+\.\d+\.\d+$/.test(version)) {
-  console.error('版本号要写成 1.2.3 这种形式，收到：' + version);
+if (!/^\d+\.\d+\.\d+(?:-as\.\d+)?$/.test(version)) {
+  console.error('版本号要写成 1.2.3 或 1.2.3-as.1 这种形式，收到：' + version);
   process.exit(2);
 }
+const isAsPatch = /-as\.\d+$/.test(version);
 const majorMinor = version.split('.').slice(0, 2).join('.');
 const tag = process.env.TAG || `v${majorMinor}-latest`;
+const isPrerelease = process.env.PRERELEASE !== '0';
+const releaseName = process.env.RELEASE_NAME || (isPrerelease ? '更新下载通道（自动更新用，请勿手动下载）' : `Alcor Agent 正式版 v${version}`);
 const assetName = path.basename(file);
 
 const bytes = fs.statSync(file).size;
@@ -108,10 +111,10 @@ try {
 } catch (error) {
   if (error.status !== 404) throw error;
 }
-if (release && (release.name !== '更新下载通道（自动更新用，请勿手动下载）' || release.prerelease !== true)) {
+if (release && (release.name !== releaseName || release.prerelease !== isPrerelease)) {
   release = await api('PATCH', `${API}/repos/${owner}/${name}/releases/${release.id}`, {
-    name: '更新下载通道（自动更新用，请勿手动下载）',
-    prerelease: true
+    name: releaseName,
+    prerelease: isPrerelease
   });
   console.log('已校正滚动 release：标为预发行，不占仓库首页 Releases 位');
 }
@@ -120,19 +123,15 @@ if (!release) {
   release = await api('POST', `${API}/repos/${owner}/${name}/releases`, {
     tag_name: tag,
     target_commitish: main.sha,
-    name: '更新下载通道（自动更新用，请勿手动下载）',
-    prerelease: true,
-    body: `这个 release 只放当前大版本的最新安装包，资产会随小版本更新替换；历史版本请在 git tag 里查。`,
+    name: releaseName,
+    prerelease: isPrerelease,
+    body: isPrerelease ? `这个 release 只放当前大版本的最新安装包，资产会随小版本更新替换；历史版本请在 git tag 里查。` : notes,
     draft: false
   });
   console.log('已创建滚动 release：' + tag);
 }
 
-// 2) 删掉旧资产（保持 release 里只有一份最新安装包）
-for (const asset of release.assets || []) {
-  await api('DELETE', `${API}/repos/${owner}/${name}/releases/assets/${asset.id}`);
-  console.log('已删除旧资产：' + asset.name);
-}
+// 2) 旧资产先留着：上传失败时清单还指向它，删早了会把通道打空（0.3.1-as.3 那次就是这样）
 
 // 3) 上传新安装包（断线重试一次）
 const uploadUrl = `${UPLOADS}/repos/${owner}/${name}/releases/${release.id}/assets?name=${encodeURIComponent(assetName)}`;
@@ -146,6 +145,17 @@ for (let attempt = 1; attempt <= 3; attempt++) {
     console.error('上传失败：' + error.message);
     if (attempt === 3) throw error;
     await new Promise((resolve) => setTimeout(resolve, 3000 * attempt));
+  }
+}
+
+// 3.5) 新包上传成功后才删旧资产，且不删刚上传的那份
+for (const asset of release.assets || []) {
+  if (asset.name === assetName) continue;
+  try {
+    await api('DELETE', `${API}/repos/${owner}/${name}/releases/assets/${asset.id}`);
+    console.log('已删除旧资产：' + asset.name);
+  } catch (error) {
+    console.error('旧资产删除失败（不影响新包）：' + error.message);
   }
 }
 

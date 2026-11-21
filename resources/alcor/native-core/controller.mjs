@@ -5,6 +5,7 @@ import {performance} from 'node:perf_hooks';
 import {fileURLToPath} from 'node:url';
 import {queryNativeHost} from './host-client.mjs';
 import {discoverQQ} from './discovery.mjs';
+import {ensureProfilePack} from './host-profiles.mjs';
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -34,9 +35,10 @@ function hostArtifacts(){
   }
   return {loader:path.join(stage,'qq-host-loader.exe'),staged:true,dir:stage};
 }
-async function load(pid,nonce,mode,startedAt){
+async function load(pid,nonce,mode,startedAt,loaderOverride){
   const args=[String(pid),String(process.pid),nonce,mode];if(startedAt)args.push(startedAt);
-  const {loader}=hostArtifacts();
+  /* 未登记版本走成对补丁包时由 connect 传入补丁后 loader 的路径；其余情况保持原随包路径。 */
+  const loader=loaderOverride||hostArtifacts().loader;
   const r=await run(loader,args,{windowsHide:true,timeout:75000,maxBuffer:8192});
   return JSON.parse(r.stdout);
 }
@@ -89,6 +91,7 @@ export class NativeController {
       }
       const row=(await this.inventory()).find(r=>r.pid===pid);
       if(!row)throw new Error('QQ_PROCESS_NOT_FOUND');
+      let packLoaderPath=null;
       if(!row.supported){
         // 兼容模式：只有用户明确同意、而且只是「构建未适配」（进程本身可读）时才继续。
         // 其他原因（外来模块、宿主已在、进程读不到）继续拒绝，那些试了只会更糟。
@@ -96,14 +99,19 @@ export class NativeController {
         if(!relaxable)throw new Error('UNSUPPORTED_QQ');
         this.lastError='UNVERIFIED_BUILD_ATTEMPT';
       this.lastUnverified = { version: row.version || '', sha256: row.sha256 || '', at: Date.now() };
+      /* 未登记构建：现场推导 profile 并生成成对补丁包（loader' + DLL'），用它代替随包 loader。
+         扫描/补丁失败会抛 PROFILE_* 带码错误，由外层 catch 记入 lastFailure。 */
+      const pack=await ensureProfilePack({moduleName:row.moduleName||'wrapper.node',sha256:row.sha256,version:row.version||'',wrapperPath: row.modulePath,qqExePath:row.path});
+      packLoaderPath=pack.loader;
       }
       const creation=/^[1-9]\d{16,18}$/.test(row.creationTime||'')?row.creationTime:null;
       if(startedAt&&creation!==startedAt)throw new Error('NATIVE_PROCESS_CHANGED');
       const owner={pid,nonce:randomBytes(16).toString('hex'),account:null,startedAt:creation};
       if(this.closed||this.disconnecting)throw new Error('NATIVE_CONNECT_CANCELLED');
-      const inspect=await runLoader(this.loader,pid,owner.nonce,'inspect-qq',creation);if(inspect.loaded)throw new Error('HOST_ALREADY_PRESENT');
+      const loaderFn=packLoaderPath?((p,n,m,s)=>this.loader(p,n,m,s,packLoaderPath)):this.loader;
+      const inspect=await runLoader(loaderFn,pid,owner.nonce,'inspect-qq',creation);if(inspect.loaded)throw new Error('HOST_ALREADY_PRESENT');
       if(this.closed||this.disconnecting)throw new Error('NATIVE_CONNECT_CANCELLED');
-      const loaded=await runLoader(this.loader,pid,owner.nonce,'qq',creation);
+      const loaded=await runLoader(loaderFn,pid,owner.nonce,'qq',creation);
       if(loaded.status!==0||!loaded.loaderReferenceReleased||loaded.pendingThread){
         const failure=loaderFailureCode(loaded);
         this.lastFailure={code:failure,stage:loaded.stage||null,status:typeof loaded.status==='number'?loaded.status:null,at:new Date().toISOString()};

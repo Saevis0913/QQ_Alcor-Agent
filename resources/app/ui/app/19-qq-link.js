@@ -17,7 +17,25 @@
     SESSION_MISMATCH: '会话不一致',
     ARCH_MISMATCH: 'QQ 非 64 位',
     HOST_RUNTIME_BROKEN: '注入组件缺失',
-    INJECTION_BLOCKED: '注入被拦'
+    INJECTION_BLOCKED: '注入被拦',
+    PROFILE_SCANNER_MISSING: '缺适配组件',
+    PROFILE_SCAN_FAILED: '版本推导失败',
+    PROFILE_SCAN_MISMATCH: '扫描期间QQ变了',
+    PROFILE_WRAPPER_NOT_FOUND: '找不到wrapper',
+    PROFILE_VERSION_UNSUPPORTED: '版本号无法登记',
+    PROFILE_PATCH_FAILED: '补丁生成失败',
+    PROFILE_VERIFY_FAILED: '补丁自检失败',
+    PROFILE_PACK_FAILED: '补丁包写入失败',
+    HOST_START_INCOMPLETE: '注入流程没走完',
+    HOST_ARTIFACT_INVALID: '宿主组件校验失败',
+    HOST_TARGET_DENIED: '拒绝注入该进程',
+    HOST_LOAD_BLOCKED: '加载宿主被拦',
+    HOST_ENTRY_FAILED: '宿主入口执行失败',
+    HOST_REFERENCE_STUCK: '加载器句柄没释放',
+    HOST_THREAD_PENDING: '宿主线程未完成',
+    HOST_LOADER_MISSING: '注入器缺失',
+    HOST_LOADER_TIMEOUT: '注入器超时',
+    HOST_LOADER_FAILED: '注入器执行失败'
   };
   const shortOf = (code) => SHORT[code] || '未连接';
   let busy = false;
