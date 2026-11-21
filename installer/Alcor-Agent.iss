@@ -4,11 +4,11 @@
 [Setup]
 AppId={{67D615C6-B01A-4880-A0AE-26C0AFC01000}
 AppName=Alcor Agent
-AppVersion=0.3.2-as.1
-AppVerName=Alcor Agent v0.3.2-as.1（0.3.2 补丁）
-VersionInfoVersion=0.3.2.1
+AppVersion=0.3.2-as.2
+AppVerName=Alcor Agent v0.3.2-as.2（0.3.2 补丁）
+VersionInfoVersion=0.3.2.2
 AppPublisher=Alcor
-AppComments=Alcor Agent v0.3.2 · 内核升级到 0.3.1，修复更新通道与安装器问题
+AppComments=Alcor Agent v0.3.2-as.2 · 新图标、活跃期加成可关、装完自动重启
 DefaultDirName=D:\Alcor
 DefaultGroupName=Alcor
 DisableProgramGroupPage=yes
@@ -19,10 +19,10 @@ WizardStyle=modern
 WizardSizePercent=115
 WizardBackColor=$F5F2F9
 UninstallDisplayIcon={app}\Alcor Agent.exe
-UninstallDisplayName=Alcor Agent v0.3.2-as.1
+UninstallDisplayName=Alcor Agent v0.3.2-as.2
 SetupIconFile=..\payload\resources\app\assets\icon.ico
 OutputDir=..\out
-OutputBaseFilename=Alcor-Agent-Setup-0.3.2-as.1-x64
+OutputBaseFilename=Alcor-Agent-Setup-0.3.2-as.2-x64
 Compression=lzma2/normal
 SolidCompression=yes
 CloseApplications=no
@@ -56,6 +56,7 @@ Name: "{userprograms}\Alcor\环境检测"; Filename: "{app}\Diagnose-Alcor.cmd";
 
 [Run]
 Filename: "{app}\Alcor Agent.exe"; Description: "打开 Alcor Agent，完成首次配置"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\Alcor Agent.exe"; Flags: nowait runascurrentuser; Check: ShouldRelaunchAfterSilent
 
 [Code]
 
@@ -74,6 +75,7 @@ var
   InstalledReport: String;
   InstalledPassed: Boolean;
   StopDone: Boolean;
+  WasInstalled: Boolean;
 
 function WindowsLines(Value: String): String;
 begin
@@ -307,6 +309,11 @@ begin
     Log('StopLockingProcesses: finished, key files unlocked');
 end;
 
+function ShouldRelaunchAfterSilent(): Boolean;
+begin
+  Result := WizardSilent() and (WasInstalled or (ExpandConstant('{param:RELAUNCH|0}') = '1'));
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopLockingProcesses();
@@ -316,7 +323,11 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssInstall then StopLockingProcesses();
+  if CurStep = ssInstall then begin
+    { 升级（目录里已有主程序）在静默安装结束后自动重启，用户不用再点一次 }
+    WasInstalled := FileExists(ExpandConstant('{app}\') + AlcorAgentExe);
+    StopLockingProcesses();
+  end;
   if CurStep = ssPostInstall then begin
     CopyFile(ReportFile, ExpandConstant('{app}\data\installation-environment.txt'), False);
     CheckInstalledEnvironment(nil);

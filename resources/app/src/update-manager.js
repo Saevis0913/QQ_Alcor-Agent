@@ -23,7 +23,7 @@ function localCoreVersion() {
 const UPDATE_DIR = path.join(DATA_DIR, 'updates');
 const MAX_INSTALLER_BYTES = 520 * 1024 * 1024;
 const START_DELAY_MS = 8_000;
-const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+const CHECK_EVERY_MS = 30 * 60 * 1000; // 30 分钟：清单被 CDN 缓存成旧版本时，最多半小时就能自己补上（原来 6 小时）
 const RETRY_MS = 20 * 60 * 1000;
 
 let state = {
@@ -455,7 +455,7 @@ export function installUpdate({ onQuit } = {}) {
   const installLog = path.join(UPDATE_DIR, 'install.log');
   /* 参数必须交给 cmd 原样转发：spawn 在 Windows 上会把引号转义成 \"，而 Inno 的
      命令行解析不认反斜杠转义，会看到 /DIR=\"D:\..." 这种带引号的目录名并直接中止安装。 */
-  const args = ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS', `/LOG=${installLog}`];
+  const args = ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS', '/RELAUNCH=1', `/LOG=${installLog}`];
   const dirArg = installDirArg(installRoot);
   if (dirArg) args.push(dirArg);
   const child = spawn(file, args, {
