@@ -8,6 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createAlcorRuntime } from './alcor-runtime.js';
 import { fileURLToPath } from 'node:url';
 import { getConfig, updateConfig, storeConfigForChat, ROOT, DATA_DIR } from './config.js';
+import { runPreflight } from './preflight.js';
 import { OneBotClient, segmentsToText, extractMediaFromSegments, expandForwardNodes } from './onebot.js';
 import { isAtMe, renderReplyPreview } from './prompt.js';
 import { sanitizeUserText } from './util.js';
@@ -1358,6 +1359,11 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
     // 会话索引后台对账：启动读的是毫秒级缓存，这里异步补扫磁盘修正差异
     // （缓存缺失的新文件/外部删除的文件）。不 await —— 不挡任何启动步骤。
     sessions.reconcileInBackground();
+
+    // 安装后自检：补目录、补运行库、清过期崩溃标记、修坏配置、选可写补丁包目录。
+    // 9ms 级但会碰磁盘，不 await；结果写 data/logs/preflight-last.json。
+    runPreflight({ installRoot: path.resolve(ROOT, '../..'), dataDir: DATA_DIR, logger: (...args) => appLog('[preflight]', ...args) })
+      .catch(() => {});
 
     // 用量档案预热：首次打开用量页的卡顿来自"冷 parse 全部会话文件"
     //（2290 个 / 178MB 实测 1.3~1.9 秒）。启动后台先预热一次（collectUsageRows

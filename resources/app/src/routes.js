@@ -11,14 +11,17 @@
 // 路由 handler 通过闭包取用，避免在 app.js 里反复传参。
 
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { getConfig, updateConfig, deepMerge as deepMergeConfig, DATA_DIR, ROOT } from './config.js';
+import { runPreflight } from './preflight.js';
 import { customSearch, SEARCH_PROVIDER_META, testSearchProvider } from './web-search.js';
 import { readUpdateSource, writeUpdateSource } from './update-source.js';
 import { diagnoseQQ, readQQProcessSnapshot, scanFrameworkDirs, qqInstallRoots } from './qq-diagnosis.js';
 import { collectInjectionCheck, runInjectionFix, formatInjectionReport } from './injection-doctor.js';
 import { probeQQCompat } from './qq-compat.js';
+import { collectPolicyReport, evaluatePolicy, policyRemedies, readPolicyMemory, recordPolicyOutcome, addDefenderExclusion } from './injection-policy.js';
 import { restartQQ, waitForQQ, locateQQExecutable } from './qq-repair.js';
 import { listModels, chatCompletion, resolveApiKey, estimateCost, cacheHitRate } from './llm.js';
 import { resolveOfficialPrice, listOfficialPrices } from './model-prices.js';
@@ -114,6 +117,52 @@ export function createRoutes(deps) {
     return verdict;
   }
 
+  // 防护策略（HVCI / 智能应用控制 / Defender / QQ 自身缓解策略）只回答「会不会被拦、被拦了走哪条路」。
+  // 它不阻断已实测能注入的机器：策略开着但上次注入成功过，会降级成提示（见 injection-policy.js）。
+  const POLICY_PACK_ROOT = process.env.ALCOR_PROFILE_PACK_DIR
+    || path.join(process.env.ProgramData || process.env.ALLUSERSPROFILE || DATA_DIR, 'Alcor', 'host');
+  const policyInstallRoot = () => path.resolve(ROOT, '../..');
+  // 宿主组件的实际哈希 vs 发布清单：对不上就说明文件被换过/截断/隔离过。
+  function artifactDigests() {
+    const root = policyInstallRoot();
+    const base = path.join(root, 'resources', 'alcor', 'artifacts', 'native');
+    let expected = new Map();
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.json'), 'utf8'));
+      for (const row of manifest?.files || []) expected.set(String(row.path || '').replace(/\//g, '\\').toLowerCase(), String(row.sha256 || ''));
+    } catch { expected = new Map(); }
+    return ['alcor-host.dll', 'qq-host-loader.exe'].map((name) => {
+      const file = path.join(base, name);
+      const key = ('resources\\alcor\\artifacts\\native\\' + name).toLowerCase();
+      const sha256 = fs.existsSync(file) ? createHash('sha256').update(fs.readFileSync(file)).digest('hex') : '';
+      return { name, sha256, expectedSha256: expected.get(key) || '' };
+    });
+  }
+  async function collectPolicy(pid, extra = {}) {
+    try {
+      const report = await collectPolicyReport({ pid: Number(pid) || 0, dataDir: DATA_DIR });
+      const memory = readPolicyMemory(DATA_DIR);
+      const evaluated = evaluatePolicy(report, { memory, installRoot: policyInstallRoot(), packRoot: POLICY_PACK_ROOT,
+        artifacts: artifactDigests(), lastFailure: extra.lastFailure || null });
+      return { ...evaluated, report: { ...report, script: undefined }, remedies: policyRemedies(report) };
+    } catch (error) {
+      return { ok: false, error: error?.message || 'POLICY_PROBE_FAILED', findings: [], blocked: false, summary: '', remedies: [] };
+    }
+  }
+  function recordConnectOutcome(verdict, result) {
+    try {
+      const cig = verdict?.policy?.report?.process?.mitigations?.microsoftSignedOnly === true;
+      const wording = String(result?.body?.wording || result?.body?.error || '');
+      const ok = Boolean(result?.ok) && result?.body?.status !== 'failed';
+      recordPolicyOutcome(DATA_DIR, {
+        cig: ok ? 'loaded' : (cig ? 'blocked' : 'unknown'),
+        elevation: verdict?.policy?.report?.self?.elevated ? 'elevated' : 'user',
+        stage: String(result?.body?.stage || ''),
+        code: ok ? 'CONNECTED' : (wording || 'CONNECT_FAILED')
+      });
+    } catch { /* 记忆写不进去不影响连接本身 */ }
+  }
+
   // 小工具：读请求体（容错：没 body 当空对象）。
   // 但 readBody 明确标记的可暴露错误（400 非法 JSON / 413 过大）必须透传，
   // 否则会从"应返回 400"退化成静默当成空 patch。
@@ -169,6 +218,14 @@ export function createRoutes(deps) {
     push('probe', '当前判定：' + verdict.code + (verdict.title ? '（' + verdict.title + '）' : ''), 'ok');
     if (verdict.code === 'ALREADY_CONNECTED') return { code: 'ALREADY_CONNECTED', steps, connection: verdict.connection || null };
 
+    verdict.policy = await collectPolicy(verdict.candidate?.pid ?? verdict.connection?.pid, { lastFailure: verdict.connection?.lastFailure || null });
+    const worst = verdict.policy.findings.find((item) => item.level === 'block');
+    if (verdict.policy.findings.length) push('policy', verdict.policy.summary || '防护策略已检查', worst ? 'manual' : 'ok');
+    if (worst) {
+      push('policy', worst.detail || worst.title, 'manual');
+      return { code: worst.code, steps, policy: verdict.policy, remedies: verdict.policy.remedies };
+    }
+
     if (verdict.code === 'NO_QQ_RUNNING') {
       const exe = await locateQQExecutable();
       if (!exe) { push('qq', '没找到 QQ 安装位置，请先安装官方 QQ', 'manual'); return { code: 'NO_QQ_INSTALL', steps }; }
@@ -206,6 +263,7 @@ export function createRoutes(deps) {
       const result = await deps.alcorManage('native/connect', { method: 'POST', body: { pid, ...(allowUnverified ? { allowUnverified: true } : {}) }, timeoutMs: 90_000 });
       const wording = result.body?.wording || result.body?.error || '';
       const ok = result.ok && result.body?.status !== 'failed';
+      recordConnectOutcome(verdict, result);
       if (ok) { push('connect', '第 ' + attempt + ' 次就注入成功（PID ' + pid + '）', 'ok'); return { code: 'CONNECTED', steps, connection: result.body?.data || result.body || null, pid }; }
       push('connect', '第 ' + attempt + ' 次失败：' + (wording || '未知原因'), attempt < 3 && retryable.has(String(wording)) ? 'retry' : 'error');
       if (!retryable.has(String(wording))) break;
@@ -218,7 +276,9 @@ export function createRoutes(deps) {
       }
       await wait(1200 * attempt);
     }
-    return { code: 'CONNECT_FAILED', steps };
+    const policy = await collectPolicy(pid, { lastFailure: verdict.connection?.lastFailure || null });
+    if (policy.remedies?.length) push('policy', '可尝试：' + policy.remedies.map((item) => item.title).join(' / '), 'manual');
+    return { code: 'CONNECT_FAILED', steps, policy };
   }
 
   return [
@@ -479,6 +539,7 @@ export function createRoutes(deps) {
       handler: async ({ res, json }) => {
         const state = await deps.alcorInspect();
         const verdict = await collectQQDiagnosis(deps, { fresh: true, state });
+        verdict.policy = await collectPolicy(verdict.candidate?.pid ?? verdict.connection?.pid, { lastFailure: state.connection?.lastFailure || null });
         return json(res, 200, { status: 'ok', data: { ...verdict,
           core: { running: state.running, backendReady: state.backendReady, code: state.code || null, error: state.error || '', version: state.version || '' } } });
       }
@@ -497,12 +558,53 @@ export function createRoutes(deps) {
         if (!pid) return json(res, 400, { status: 'failed', wording: verdict.code, error: verdict.hint || verdict.title });
         const allowUnverified = body?.allowUnverified === true;
         const result = await deps.alcorManage('native/connect', { method: 'POST', body: { pid, ...(allowUnverified ? { allowUnverified } : {}) }, timeoutMs: 90_000 });
+        const failure = result.ok ? (verdict.connection?.lastFailure || null) : { code: String(result.body?.wording || result.body?.error || 'CONNECT_FAILED'), stage: String(result.body?.stage || ''), at: new Date().toISOString() };
+        verdict.policy = await collectPolicy(pid, { lastFailure: failure });
+        recordConnectOutcome(verdict, result);
         if (!result.ok || result.body?.status === 'failed') {
           return json(res, 502, { status: 'failed', wording: result.body?.wording || result.body?.error || 'QQ_CONNECT_FAILED',
             error: result.body?.wording || result.body?.error || '连接 QQ 失败' });
         }
         log('info', 'qq', 'QQ 原生宿主连接请求已提交 · PID ' + pid);
         return json(res, 200, { status: 'ok', data: { pid, connection: result.body?.data || result.body || null } });
+      }
+    },
+    {
+      // 防护策略报告：HVCI / 智能应用控制 / Defender / QQ 自身缓解策略 / 权限、会话、事件核对
+      method: 'GET', pattern: '/api/policy/report',
+      handler: async ({ res, json, url }) => {
+        const pid = Number(url.searchParams.get('pid')) || 0;
+        return json(res, 200, { status: 'ok', data: await collectPolicy(pid) });
+      }
+    },
+    {
+      // 把安装目录与宿主中转目录加进 Defender 排除项（会弹一次 UAC，用户点了才执行）
+      method: 'POST', pattern: '/api/policy/defender-exclusion',
+      handler: async ({ res, json }) => {
+        const report = await collectPolicyReport({ pid: 0, dataDir: DATA_DIR });
+        const normalize = (value) => String(value || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+        const paths = [policyInstallRoot(), POLICY_PACK_ROOT].filter(Boolean);
+        const existing = new Set((report?.machine?.exclusions || []).map(normalize));
+        const missing = paths.filter((item) => !existing.has(normalize(item)));
+        if (!missing.length) return json(res, 200, { status: 'ok', data: { added: [], already: paths } });
+        const outcome = await addDefenderExclusion({ paths: missing, dataDir: DATA_DIR });
+        if (!outcome.ok) return json(res, 502, { status: 'failed', wording: 'POLICY_EXCLUSION_FAILED', error: outcome.error || '添加排除项失败' });
+        recordPolicyOutcome(DATA_DIR, { defenderExclusion: new Date().toISOString() });
+        return json(res, 200, { status: 'ok', data: { added: outcome.added || missing } });
+      }
+    },
+    {
+      // 安装后自检：目录、运行库、崩溃标记、坏配置、补丁包目录；默认会安全自愈
+      method: 'GET', pattern: '/api/preflight',
+      handler: async ({ res, json, url }) => {
+        const fix = url.searchParams.get('fix') !== '0';
+        const result = await runPreflight({
+          installRoot: path.resolve(ROOT, '../..'),
+          dataDir: DATA_DIR,
+          dryRun: !fix,
+          logger: (line) => log('info', 'preflight', line),
+        });
+        return json(res, 200, { status: 'ok', data: result });
       }
     },
     {

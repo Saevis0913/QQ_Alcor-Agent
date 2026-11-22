@@ -84,7 +84,7 @@ async function runDoctor(t, processStatus, processReply, options = {}) {
   await fs.mkdir(path.join(app, 'tools'));
   await fs.mkdir(path.join(root, 'resources', 'alcor', 'src'), { recursive: true });
   await fs.writeFile(path.join(app, 'package.json'), JSON.stringify({ type: 'module' }));
-  for (const file of ['qq-diagnosis.js', 'alcor-runtime.js', 'profile.js', 'standard-connection.js']) {
+  for (const file of ['qq-diagnosis.js', 'alcor-runtime.js', 'profile.js', 'standard-connection.js', 'injection-policy.js']) {
     await fs.copyFile(new URL('../src/' + file, import.meta.url), path.join(app, 'src', file));
   }
   await fs.copyFile(new URL('../../alcor/src/config.mjs', import.meta.url), path.join(root, 'resources', 'alcor', 'src', 'config.mjs'));

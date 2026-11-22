@@ -33,7 +33,7 @@ const ENTRY_SIZE=0xA0;        // {char* version; char* sha256; uint8_t digest[32
 const ENTRY_DIGEST_OFF=0x10;
 const ENTRY_RVAS_OFF=0x30;
 const SHA_ASCII_LEN=64;
-const KNOWN_CODES=new Set(['PROFILE_SCANNER_MISSING','PROFILE_SCAN_FAILED','PROFILE_SCAN_MISMATCH','PROFILE_WRAPPER_NOT_FOUND','PROFILE_VERSION_UNSUPPORTED','PROFILE_PATCH_FAILED','PROFILE_VERIFY_FAILED','PROFILE_PACK_FAILED']);
+const KNOWN_CODES=new Set(['PROFILE_SCANNER_MISSING','PROFILE_SCAN_FAILED','PROFILE_SCAN_MISMATCH','PROFILE_SCAN_LOW_CONFIDENCE','PROFILE_WRAPPER_NOT_FOUND','PROFILE_VERSION_UNSUPPORTED','PROFILE_PATCH_FAILED','PROFILE_VERIFY_FAILED','PROFILE_PACK_FAILED']);
 const inFlight=new Map();
 /* F6：跨进程构建互斥——同一 sha 的补丁包同一时刻只允许一个进程真正构建：
    - 想建包的进程先以 O_EXCL 创建 <sha16>.building.json（记录 pid/host/startedAt）；
@@ -366,7 +366,12 @@ async function defaultScanNow({scannerPath,wrapperPath}){
   if(r.spawnError)fail('PROFILE_SCAN_FAILED',String(r.spawnError.message||r.spawnError));
   if(r.timedOut)fail('PROFILE_SCAN_FAILED','scanner timed out after 300s');
   if(r.overflow)fail('PROFILE_SCAN_FAILED','scanner output exceeded 16MB');
-  if(r.code!==0)fail('PROFILE_SCAN_FAILED',(r.stderr||r.stdout||'exit '+r.code).trim());
+  if(r.code!==0){
+    const note=String(r.stderr||r.stdout||'').trim();
+    // 扫描器自己判低置信度时保留原始判定码，别混进普通扫描失败里
+    if(/^qq-profile-scan: FAIL: PROFILE_SCAN_LOW_CONFIDENCE/.test(note))fail('PROFILE_SCAN_LOW_CONFIDENCE',note.replace(/^qq-profile-scan: FAIL: PROFILE_SCAN_LOW_CONFIDENCE:?\s*/,''));
+    fail('PROFILE_SCAN_FAILED',note||('exit '+r.code));
+  }
   let data;
   try{data=JSON.parse(r.stdout);}catch{fail('PROFILE_SCAN_FAILED','scanner did not emit JSON');}
   return data;

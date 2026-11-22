@@ -89,6 +89,10 @@ const FAILURE_TEXT = {
     '用安装包覆盖安装一次（覆盖安装不会动 data 目录），再重试连接。'],
   PROFILE_SCAN_FAILED: ['现场推导 profile 失败', '离线扫描器没能从这个版本的 wrapper.node 复原出全部 RVA（构建差异超出已知锚点），没有写入任何补丁。',
     '装回受支持的 QQ 版本（9.9.36-53644 / 9.9.37-54395），或把判定码与 data/logs 当日日志一起反馈以适配该版本。'],
+  IDENTITY_UNREADABLE: ['账号读不到（会话服务不在宿主线程上）', '宿主已进 QQ 且 heartbeat 正常，但 identity 恒为 status=6：这版 QQ 把会话服务放在线程局部存储里，注入线程取不到。',
+    '换回已验证的 QQ 版本可直接连接；这一项不是安全软件拦截，别去关内存完整性或杀软。'],
+  PROFILE_SCAN_LOW_CONFIDENCE: ['这版 QQ 的结构和已知锚点对不上', '扫描器发现自己复原的偏移互相矛盾（落点不在代码段、或多字段指向同一处），判定为低置信度，没有写入任何补丁、也没有碰 QQ。',
+    '先按受支持版本使用；把判定码与 QQ 版本号反馈后加进适配矩阵，不靠猜偏移硬打补丁。'],
   PROFILE_SCAN_MISMATCH: ['QQ 文件在扫描前后不一致', '扫描到的 wrapper.node 与进程清单里的哈希对不上，多半是 QQ 正在自动更新。',
     '等 QQ 更新完成、完全退出 QQ（任务栏退出）重新登录后，再点「重新扫描」。'],
   PROFILE_WRAPPER_NOT_FOUND: ['找不到 QQ 的 wrapper.node', '按 QQ.exe 的位置推导 resources/app/wrapper.node 时文件不存在，QQ 安装可能不完整。',
@@ -264,8 +268,26 @@ export function diagnoseQQ({
   const failureStale = Number.isSafeInteger(failurePid) && failurePid > 0 && !rows.some((row) => Number(row.pid) === failurePid);
   if (failure && failureStale) warnings.push('上次失败发生在已退出的 QQ 进程（PID ' + failurePid + '），本次判定忽略');
   if (failure && !failureStale) {
-    return { ...base, code: 'INJECTION_BLOCKED', title: failure.title,
-      detail: failure.detail, hint: failure.hint, candidate };
+    const stage = String(failure.stage || '');
+    const failCode = String(failure.code || '');
+    // 只有加载器真的走到注入阶段，才叫「注入被拦」。
+    const injected = /^(load_library|target_identity|artifact_identity|module_already_loaded|entry|startup)$/.test(stage)
+      || /^HOST_(LOAD|TARGET|ARTIFACT|ALREADY|START|THREAD|REFERENCE|ENTRY|RUNTIME)/.test(failCode);
+    if (failCode === 'IDENTITY_UNREADABLE' || stage === 'identity') {
+      return { ...base, code: 'IDENTITY_UNREADABLE',
+        title: '账号读不到：这版 QQ 的会话服务不在宿主线程上',
+        detail: '宿主已经进了 QQ（heartbeat 正常），但取账号时 QQ 返回 status=6：9.9.37 起会话服务是线程局部对象，注入线程上没有它。',
+        hint: '这不是杀软或内存完整性拦的，别去关防护；换回 9.9.36-53644 可直接连接，或把判定码反馈给适配矩阵。', candidate };
+    }
+    // 只有「参数解析 / 探测」这类明确没进入注入流程的阶段才排除；未知阶段仍按原逻辑保守处理。
+    const nonInjectionStage = /^(arguments|inspected|probe|inspect)$/.test(stage);
+    if (!injected && nonInjectionStage) {
+      // 排查器只跑 --arguments 时也会写一条失败记录，那不能当成「注入被拦」。
+      warnings.push('上次失败不在注入阶段（' + (stage || failCode || '未知') + '），本次判定不据此报「注入被拦」');
+    } else {
+      return { ...base, code: 'INJECTION_BLOCKED', title: failure.title,
+        detail: failure.detail, hint: failure.hint, candidate };
+    }
   }
   return { ...base, warnings, code: 'READY_TO_CONNECT', title: `找到可连接的 QQ（${candidate.version || '未知版本'}，PID ${candidate.pid}）`,
     detail: candidate.verification === 'live' ? '这个构建已通过真实收发验证。' : '这个构建已完成静态适配，连接后确认账号与收发。',

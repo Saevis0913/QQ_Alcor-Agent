@@ -6,6 +6,8 @@ import {fileURLToPath} from 'node:url';
 import {queryNativeHost} from './host-client.mjs';
 import {discoverQQ} from './discovery.mjs';
 import {ensureProfilePack} from './host-profiles.mjs';
+import {findQQBuildProfile} from './qq-profiles.mjs';
+import {readIdentityMemory,pickAccount} from './identity-fallback.mjs';
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -51,6 +53,36 @@ function loaderFailureCode(loaded){
   if(loaded?.pendingThread)return 'HOST_THREAD_PENDING';
   return STAGE_FAILURES[loaded?.stage]||'HOST_START_INCOMPLETE';
 }
+/* 9.9.37 起 QQ 的 msg service 变成线程局部对象：宿主跑在注入线程上，identity 恒返回 status=6。
+   账号 uin 本身仍在 wrapper.node 的 account_pair 单例里，可以只读进程内存拿到。
+   这里只做「读一份 uin」，不改 QQ；拿不到就原样返回 null，让上层继续报未登录。 */
+const RVA_ACCOUNT_PAIR=11;
+const RVA_SERVICE_GLOBAL=7;
+// 内建表把 rvas 存成对象（按名字），现场扫出来的是长度 14 的数组，两种都要能取。
+function rvaOf(rvas,name,index){
+  if(Array.isArray(rvas))return rvas.length===14?rvas[index]:null;
+  if(rvas&&typeof rvas==='object')return rvas[name]??null;
+  return null;
+}
+async function readIdentityHint(pid,rvas){
+  const accountRva=rvaOf(rvas,'account_pair',RVA_ACCOUNT_PAIR);
+  const serviceRva=rvaOf(rvas,'service_global',RVA_SERVICE_GLOBAL);
+  if(!Number.isInteger(accountRva)||accountRva<=0)return null;
+  const dump=await readIdentityMemory({pid,moduleName:'wrapper.node',rvas:[accountRva,serviceRva]});
+  if(!dump.ok)return {account:null,reason:dump.code||'IDENTITY_MEMORY_UNREADABLE'};
+  const account=pickAccount(dump.values,accountRva);
+  const service=Number.isInteger(serviceRva)?dump.values?.[serviceRva.toString(16)]:null;
+  return {account,reason:null,serviceBound:Boolean(service&&service.lo!==0n),base:dump.base};
+}
+/* 纯决策：宿主 identity 可信就用它；不可信但有内存读到的 uin 就合成；两者都没有才报错。
+   拆成纯函数是为了能单测，不依赖真的 QQ 进程。 */
+export function identityDecision(id,hint){
+  const bad=!id||id.status!==0||id.flags!==15||!id.account||id.account==='0';
+  if(!bad)return {identity:id,source:'host',error:null};
+  if(hint&&hint.account)return {identity:{...(id||{}),status:0,account:hint.account,flags:15},source:'memory',error:null,hint};
+  const error=(id&&id.status===6)?'IDENTITY_UNREADABLE':'QQ_LOGIN_NOT_CONFIRMED';
+  return {identity:id||null,source:'host',error,hint:hint||null};
+}
 async function readIdentity(query,owner,attempts=3){
   let last=null;
   for(let i=0;i<attempts;i+=1){
@@ -92,6 +124,7 @@ export class NativeController {
       const row=(await this.inventory()).find(r=>r.pid===pid);
       if(!row)throw new Error('QQ_PROCESS_NOT_FOUND');
       let packLoaderPath=null;
+      let packProfile=null;
       if(!row.supported){
         // 兼容模式：只有用户明确同意、而且只是「构建未适配」（进程本身可读）时才继续。
         // 其他原因（外来模块、宿主已在、进程读不到）继续拒绝，那些试了只会更糟。
@@ -103,6 +136,7 @@ export class NativeController {
          扫描/补丁失败会抛 PROFILE_* 带码错误，由外层 catch 记入 lastFailure。 */
       const pack=await ensureProfilePack({moduleName:row.moduleName||'wrapper.node',sha256:row.sha256,version:row.version||'',wrapperPath: row.modulePath,qqExePath:row.path});
       packLoaderPath=pack.loader;
+      packProfile=pack.profile||null;
       }
       const creation=/^[1-9]\d{16,18}$/.test(row.creationTime||'')?row.creationTime:null;
       if(startedAt&&creation!==startedAt)throw new Error('NATIVE_PROCESS_CHANGED');
@@ -119,14 +153,26 @@ export class NativeController {
       }
       this.owner=owner;
       try {
-        const id=await readIdentity(this.query.bind(this),owner);
-        if(id.status!==0||id.flags!==15||!id.account||id.account==='0')throw new Error('QQ_LOGIN_NOT_CONFIRMED');
+        const hostId=await readIdentity(this.query.bind(this),owner);
+        let identity=hostId, identitySource='host';
+        if(!hostId||hostId.status!==0||hostId.flags!==15||!hostId.account||hostId.account==='0'){
+          // 宿主取不到 service 时不代表没登录：换只读内存把 uin 取回来，并记下 service 是否为空。
+          const hint=await readIdentityHint(pid,packProfile?.rvas||findQQBuildProfile(row.moduleName||'wrapper.node',row.sha256)?.rvas);
+          const decision=identityDecision(hostId,hint);
+          this.lastIdentityHint={account:decision.identity?.account??null,serviceBound:hint?.serviceBound??null,hostStatus:hostId?.status??null,reason:decision.error||hint?.reason||null,at:new Date().toISOString()};
+          if(decision.error)throw new Error(decision.error);
+          identity=decision.identity;
+          identitySource=decision.source;
+          owner.identitySource='memory';
+          owner.serviceBound=hint?.serviceBound===true;
+        }
+        const id=identity;
         if(account&&id.account!==account)throw new Error('NATIVE_ACCOUNT_CHANGED');
         if(this.closed||this.disconnecting)throw new Error('NATIVE_CONNECT_CANCELLED');
-        owner.account=id.account;this.lastError=null;this.lastFailure=null;
+        owner.account=id.account;owner.identitySource=identitySource;this.lastError=null;this.lastFailure=null;
         this.timer=setInterval(()=>{if(this.heartbeatPending)return;this.heartbeatPending=true;this.enqueue(async()=>{
           if(this.owner!==owner||this.disconnecting||this.closed)return;
-          try{const r=await this.query({...owner,operation:'heartbeat'});if(r.status!==0)throw new Error('HOST_HEARTBEAT_FAILED');const id=await this.query({...owner,operation:'identity'});if(id.status!==0||id.flags!==15||id.account!==owner.account)throw new Error('HOST_ACCOUNT_CHANGED');}
+          try{const r=await this.query({...owner,operation:'heartbeat'});if(r.status!==0)throw new Error('HOST_HEARTBEAT_FAILED');const id=await this.query({...owner,operation:'identity'});if(owner.identitySource!=='memory'&&(id.status!==0||id.flags!==15||id.account!==owner.account))throw new Error('HOST_ACCOUNT_CHANGED');}
           catch{this.lastError='HOST_CONNECTION_LOST';clearInterval(this.timer);try{await this.query({...owner,operation:'stop'});}catch{}this.owner=null;}
         }).finally(()=>{this.heartbeatPending=false;});},this.heartbeatMs);this.timer.unref();
         return this.snapshot();
@@ -139,6 +185,10 @@ export class NativeController {
     const owner = this.owner, account = owner?.account, generation = this.ownerGeneration;
     if (!account || this.disconnecting || this.closed) return Promise.reject(new Error('NATIVE_NOT_CONNECTED'));
     if (expectedAccount != null && account !== expectedAccount) return Promise.reject(new Error('HOST_ACCOUNT_CHANGED'));
+    // 内存兜底确认过账号时，identity 直接给合成结果：宿主那条线程局部路径拿不到 service，问了也是 6。
+    if (operation === 'identity' && owner?.identitySource === 'memory') {
+      return Promise.resolve({ status: 0, account: owner.account, flags: 15, source: 'memory', serviceBound: owner.serviceBound === true });
+    }
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000 ||
         !Number.isInteger(nativeTimeoutMs) || nativeTimeoutMs < 1 || nativeTimeoutMs > 10000) {
       return Promise.reject(new Error('HOST_ARGUMENT_INVALID'));
@@ -179,3 +229,4 @@ export class NativeController {
   }
   async close(){this.closed=true;await this.disconnect();}
 }
+export {readIdentityHint};

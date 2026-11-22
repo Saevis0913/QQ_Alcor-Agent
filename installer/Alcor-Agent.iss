@@ -1,4 +1,4 @@
-﻿#ifndef Payload
+#ifndef Payload
   #define Payload "..\payload"
 #endif
 [Setup]
@@ -57,6 +57,7 @@ Name: "{userprograms}\Alcor\环境检测"; Filename: "{app}\Diagnose-Alcor.cmd";
 [Run]
 Filename: "{app}\Alcor Agent.exe"; Description: "打开 Alcor Agent，完成首次配置"; Flags: postinstall nowait skipifsilent
 Filename: "{app}\Alcor Agent.exe"; Flags: nowait runascurrentuser; Check: ShouldRelaunchAfterSilent
+Filename: "{code:GetQQPathToStart}"; Flags: nowait runascurrentuser; Check: ShouldRestartQQ
 
 [Code]
 
@@ -76,6 +77,8 @@ var
   InstalledPassed: Boolean;
   StopDone: Boolean;
   WasInstalled: Boolean;
+  WasQQRunning: Boolean;
+  QQExePath: String;
 
 function WindowsLines(Value: String): String;
 begin
@@ -309,6 +312,102 @@ begin
     Log('StopLockingProcesses: finished, key files unlocked');
 end;
 
+function ReadAllText(FileName: String): String;
+var
+  Raw: AnsiString;
+begin
+  Result := '';
+  if FileExists(FileName) and LoadStringFromFile(FileName, Raw) then Result := Raw;
+end;
+
+{ 升级前 QQ 若在运行，装完把它重新拉起来：否则用户会看到「QQ 突然没了」，还要自己再开一次。 }
+function DetectQQProcess(): Boolean;
+var
+  Code: Integer;
+  Tmp: String;
+begin
+  Tmp := ExpandConstant('{tmp}\qq-probe.txt');
+  Exec(ExpandConstant('{cmd}'), '/c tasklist /FI "IMAGENAME eq QQ.exe" /NH > "' + Tmp + '"', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Result := Pos('QQ.exe', ReadAllText(Tmp)) > 0;
+end;
+
+function DetectQQPath(): String;
+var
+  Code: Integer;
+  Tmp: String;
+  OutPath: String;
+  Pwsh: String;
+  Script: String;
+  RegPath: String;
+begin
+  Tmp := ExpandConstant('{tmp}\qq-path.txt');
+  DeleteFile(Tmp);
+
+  Pwsh := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  if not FileExists(Pwsh) then
+    Pwsh := ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe');
+
+  Script := Tmp + '.ps1';
+  SaveStringToFile(Script,
+    '$procs = @(Get-CimInstance Win32_Process -Filter "Name=' + #39 + 'QQ.exe' + #39 + '" -ErrorAction SilentlyContinue)' + #13#10 +
+    'if ($procs.Count -gt 0) { [IO.File]::WriteAllText(' + #39 + Tmp + #39 + ', $procs[0].ExecutablePath, [Text.Encoding]::Default) }' + #13#10, False);
+
+  if FileExists(Pwsh) then
+    Exec(Pwsh, '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '"', '', SW_HIDE, ewWaitUntilTerminated, Code)
+  else
+    Log('DetectQQPath: powershell not found at ' + Pwsh);
+
+  OutPath := Trim(ReadAllText(Tmp));
+  if Copy(OutPath, 1, 3) = #$EF#$BB#$BF then
+    OutPath := Trim(Copy(OutPath, 4, Length(OutPath)));
+  StringChangeEx(OutPath, #13, '', True);
+  StringChangeEx(OutPath, #10, '', True);
+  if (OutPath = '') or (Pos('?', OutPath) > 0) or (not FileExists(OutPath)) then
+    OutPath := '';
+
+  if OutPath = '' then
+  begin
+    if RegQueryStringValue(HKCU, 'Software\Tencent', 'TypePath', RegPath) and FileExists(RegPath) then
+      OutPath := RegPath
+    else if RegQueryStringValue(HKCU, 'Software\Tencent\QQ', 'InstallPath', RegPath) then
+    begin
+      RegPath := AddBackslash(RegPath) + 'Bin\QQ.exe';
+      if FileExists(RegPath) then
+        OutPath := RegPath;
+    end;
+  end;
+
+  Log('DetectQQPath: ' + OutPath);
+  Result := OutPath;
+end;
+
+function ShouldRestartQQ(): Boolean;
+var
+  Forced: String;
+begin
+  Result := WasQQRunning and (QQExePath <> '') and FileExists(QQExePath) and not DetectQQProcess();
+  if Result then
+    exit;
+
+  Forced := DetectQQPath();
+  if Forced = '' then
+    exit;
+
+  if ExpandConstant('{param:RESTARTQQ|0}') = '1' then
+  begin
+    QQExePath := Forced;
+    Result := True;
+  end;
+end;
+
+function GetQQPathToStart(Param: String): String;
+begin
+  if QQExePath <> '' then
+    Result := QQExePath
+  else
+    Result := DetectQQPath();
+end;
+
 function ShouldRelaunchAfterSilent(): Boolean;
 begin
   Result := WizardSilent() and (WasInstalled or (ExpandConstant('{param:RELAUNCH|0}') = '1'));
@@ -316,6 +415,14 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  { 先记下 QQ 是否在跑：StopLockingProcesses 为了换 DLL 可能会把 QQ 一起停掉。 }
+  if not WasQQRunning then begin
+    WasQQRunning := DetectQQProcess();
+    if WasQQRunning then begin
+      QQExePath := DetectQQPath();
+      Log('PrepareToInstall: QQ was running at ' + QQExePath);
+    end;
+  end;
   StopLockingProcesses();
   if (CheckedDir <> WizardDirValue) or not CheckPassed then CheckEnvironment(nil);
   if not CheckPassed then Result := '环境检测未通过。请返回环境检测页，复制完整报告交给本地 AI 程序。' else Result := '';

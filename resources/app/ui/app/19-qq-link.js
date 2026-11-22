@@ -45,7 +45,24 @@
     HOST_THREAD_PENDING: '宿主线程未完成',
     HOST_LOADER_MISSING: '注入器缺失',
     HOST_LOADER_TIMEOUT: '注入器超时',
-    HOST_LOADER_FAILED: '注入器执行失败'
+    HOST_LOADER_FAILED: '注入器执行失败',
+    IDENTITY_UNREADABLE: '这版 QQ 账号读不到',
+    PROFILE_SCAN_LOW_CONFIDENCE: '这版 QQ 结构对不上锚点',
+    POLICY_HVCI_ON: '内存完整性开着',
+    POLICY_SAC_ENFORCING: '应用控制强制',
+    POLICY_SAC_EVALUATION: '应用控制评估中',
+    POLICY_DEFENDER_REALTIME: 'Defender 未排除',
+    POLICY_ASR_RANSOMWARE: 'ASR 规则拦注入',
+    POLICY_QQ_CIG: 'QQ 只认签名模块',
+    POLICY_QQ_CIG_CONFIRMED_BLOCK: 'QQ 已拒未签名模块',
+    POLICY_QQ_ACG: 'QQ 禁止动态代码',
+    POLICY_QQ_BLOCK_REMOTE_IMAGE: 'QQ 拒网络路径模块',
+    POLICY_QQ_BLOCK_LOW_LABEL: 'QQ 拒低完整性模块',
+    POLICY_CODE_INTEGRITY_BLOCK: '代码完整性已拦',
+    POLICY_CODE_INTEGRITY_AUDIT: '代码完整性审计',
+    POLICY_AV_QUARANTINE: '安全软件处置过',
+    POLICY_ARTIFACT_HASH_MISMATCH: '宿主组件被改过',
+    POLICY_EVIDENCE_UNCONFIRMED: '尚未确认是它拦的'
   };
   const shortOf = (code) => SHORT[code] || '未连接';
   let busy = false;
@@ -88,6 +105,7 @@
       ${failureText ? `<p class="qq-detail">上次失败 · ${esc(failureText)}</p>` : ''}
       ${showNative && v.running !== false ? `<ul class="qq-procs">${(v.processes || []).map((row) => rowHtml(row, v.compat?.flags)).join('') || `<li class="qq-empty">${emptyText}</li>`}</ul>` : ''}
       ${compatHtml(v)}
+      ${policyHtml(v)}
       ${dirs ? `<ul class="qq-dirs">${dirs}</ul>` : ''}
       <div class="qq-acts">
         ${showNative ? '<button class="btn btn-primary btn-small" data-qq="auto">一键检测并连接</button>' : ''}
@@ -119,6 +137,23 @@
     return `<p class="qq-compat">${bits.join(' · ')}</p>${warn.length ? `<p class="qq-warnline">注意：${esc(warn.join('、'))}</p>` : ''}`;
   }
 
+  // 防护策略：只说两种口径——「已确认被拦」和「只是环境提示，尚未确认」。
+  function policyHtml(v) {
+    const p = v.policy;
+    if (!p || !p.ok) return '';
+    const findings = p.findings || [];
+    if (!findings.length) return '<p class="qq-compat">防护策略：未发现限制</p>';
+    const items = findings.map((f) => {
+      const tone = f.level === 'block' ? 'qq-bad' : f.level === 'warn' ? 'qq-warn' : 'qq-ok';
+      const label = f.level === 'block' ? '会拦' : f.level === 'warn' ? '可能拦' : '提示';
+      return `<li><span class="${tone}">${label}</span> ${esc(f.title)}${f.detail ? `<em>${esc(f.detail)}</em>` : ''}</li>`;
+    }).join('');
+    const acts = [];
+    if ((p.remedies || []).some((r) => r.id === 'defender-exclusion')) acts.push('<button class="btn btn-small" data-policy="defender">为 Alcor 加 Defender 排除项</button>');
+    if (p.report?.self?.elevated === false) acts.push('<button class="btn btn-small" data-policy="admin">以管理员重启</button>');
+    acts.push('<button class="btn btn-small" data-policy="onebot">改用 OneBot 接入</button>');
+    return `<div class="qq-policy"><p class="qq-compat">防护策略：${esc(p.summary || '')}</p><ul class="qq-dirs">${items}</ul><div class="qq-acts">${acts.join('')}</div></div>`;
+  }
   async function paint(box, { status = '' } = {}) {
     box.innerHTML = '<p class="qq-detail">正在检查连接…</p>';
     try {
@@ -209,6 +244,37 @@
         }
       });
     });
+      // 防护策略的动作：加排除项 / 提权重启 / 改走 OneBot（不依赖注入）
+      box.querySelectorAll('[data-policy]').forEach((button) => {
+        if (!button?.dataset?.policy) return; // 选择器兜底：只接真正带 data-policy 的按钮
+        button.addEventListener('click', async () => {
+          if (busy) return;
+          busy = true;
+          const kind = button.dataset.policy;
+          button.disabled = true;
+          try {
+            if (kind === 'defender') {
+              setStatus(box, '正在请求管理员权限添加排除项（会弹一次 UAC）…');
+              const result = await api('/api/policy/defender-exclusion', { method: 'POST', body: '{}' });
+              const added = (result.data?.added || []).join('、');
+              await paint(box, { status: result.status === 'ok' ? `已加入排除项：${added || '本来就有'}` : `添加失败：${result.error || result.wording || '未知原因'}` });
+              return;
+            }
+            if (kind === 'admin') {
+              setStatus(box, '正在以管理员身份重启…');
+              const result = await api('/api/app/relaunch-admin', { method: 'POST', body: '{}' });
+              setStatus(box, result.status === 'ok' ? '已请求提权启动，稍等新窗口出现。' : '提权失败：' + (result.error || result.wording || '未知原因'));
+              return;
+            }
+            setStatus(box, '在「连接方式」里选 OneBot 标准接入，填入已有 OneBot 服务的地址与令牌即可；这条路径不依赖进程注入。');
+          } catch (error) {
+            setStatus(box, `操作失败：${String(error?.message || error)}`);
+          } finally {
+            busy = false;
+            button.disabled = false;
+          }
+        });
+      });
   }
 
   window.renderQqLinkCard = function renderQqLinkCard() {

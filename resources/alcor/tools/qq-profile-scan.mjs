@@ -373,6 +373,29 @@ recovered.callback_destroy = uniqueSignature('callback_destroy',
 recovered.receive = uniqueSignature('receive',
   '55 41 57 41 56 41 55 41 54 56 57 53 48 81 ec 28 01 00 00 48 8d ac 24 80 00 00 00 48 c7 85 a0 00 00 00 fe ff ff ff 44 89 c6 48 89 8d 90 00 00 00 48 83 3a 00', true);
 
+const FIELD_ORDER = ['service_getter', 'release', 'string_construct', 'string_destroy', 'callback_move', 'callback_present', 'callback_destroy', 'service_global', 'core_global', 'service_vtable', 'core_vtable', 'account_pair', 'send', 'receive'];
+
+// ---------- confidence gate ----------
+// 结构大改的版本宁可判低置信度，也不要拿猜错的偏移去打补丁：
+// ① 每个 RVA 必须落在 .text（代码段）里；② 14 个字段不得互相重复。
+const CODE_FIELDS = ['service_getter', 'release', 'string_construct', 'string_destroy', 'callback_move',
+  'callback_present', 'callback_destroy', 'send', 'receive'];
+const textLo = text.va, textHi = text.va + Math.max(text.vsize, text.rsize);
+const outsideText = CODE_FIELDS.filter(f => recovered[f] < textLo || recovered[f] >= textHi);
+if (outsideText.length) {
+  fail('PROFILE_SCAN_LOW_CONFIDENCE: ' + outsideText.length + ' code RVAs land outside .text ('
+    + outsideText.map(f => f + '=0x' + recovered[f].toString(16)).join(', ') + ')');
+}
+// 数据类字段允许落在 .data 的未初始化区（.bss 部分没有文件字节），只要求被某个区段覆盖。
+const inAnySection = (rva) => pe.sections.some(s2 => rva >= s2.va && rva < s2.va + Math.max(s2.vsize, s2.rsize));
+const unmapped = FIELD_ORDER.filter(f => !inAnySection(recovered[f]));
+if (unmapped.length) {
+  fail('PROFILE_SCAN_LOW_CONFIDENCE: ' + unmapped.length + ' RVAs are not mapped by any section ('
+    + unmapped.map(f => f + '=0x' + recovered[f].toString(16)).join(', ') + ')');
+}
+const duplicated = FIELD_ORDER.filter((f, index) => FIELD_ORDER.findIndex(other => recovered[other] === recovered[f]) !== index);
+if (duplicated.length) fail('PROFILE_SCAN_LOW_CONFIDENCE: duplicate RVA across fields: ' + duplicated.join(', '));
+
 // ---------- sha256 + self-verification against known profiles ----------
 const sha256 = createHash('sha256').update(buf).digest('hex');
 let profile = null, profileError = null;
@@ -381,7 +404,6 @@ try {
   profile = mod.findQQBuildProfile('wrapper.node', sha256);
 } catch (e) { profileError = e.message; }
 
-const FIELD_ORDER = ['service_getter', 'release', 'string_construct', 'string_destroy', 'callback_move', 'callback_present', 'callback_destroy', 'service_global', 'core_global', 'service_vtable', 'core_vtable', 'account_pair', 'send', 'receive'];
 let selfCheck = null;
 if (profile) {
   const mismatches = FIELD_ORDER.filter(f => profile.rvas[f] !== recovered[f]);
