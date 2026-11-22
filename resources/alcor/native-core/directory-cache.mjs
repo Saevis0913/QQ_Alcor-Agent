@@ -5,6 +5,10 @@ export class NativeDirectory{
  clear(){this.cache.clear();this.pending.clear();}
  scope(){return {account:this.backend.account,generation:this.backend.receiveGeneration};}
  current(scope){return scope?.account===this.backend.account&&scope?.generation===this.backend.receiveGeneration;}
+ #storeEntry(key, row) {
+  this.cache.set(key, row);
+  while (this.cache.size > 128) this.cache.delete(this.cache.keys().next().value);
+ }
  async request(operation,payload,decode,scope=this.scope()){
   if(!this.current(scope))throw new Error('DIRECTORY_CONNECTION_CHANGED');
   const r=await this.backend.controller.request(operation,{payload,expectedAccount:scope.account,nativeTimeoutMs:operation==='members'?1500:8000,timeoutMs:operation==='members'?2500:10000});
@@ -16,7 +20,13 @@ export class NativeDirectory{
   const row=this.cache.get(key);if(!force&&row&&this.current(row.scope)&&Date.now()-row.at<ttl)return row.value;
   const pending=this.pending.get(key);if(pending&&this.current(pending.scope))return pending.promise;
   const scope=this.scope();
-  const promise=fn(scope).then(value=>{if(!this.current(scope))throw new Error('DIRECTORY_CONNECTION_CHANGED');this.cache.set(key,{at:Date.now(),value,scope});while(this.cache.size>128)this.cache.delete(this.cache.keys().next().value);return value;}).finally(()=>{if(this.pending.get(key)?.promise===promise)this.pending.delete(key);});
+  const promise = fn(scope).then(value => {
+   if (!this.current(scope)) throw new Error('DIRECTORY_CONNECTION_CHANGED');
+   this.#storeEntry(key, { at: Date.now(), value, scope });
+   return value;
+  }).finally(() => {
+   if (this.pending.get(key)?.promise === promise) this.pending.delete(key);
+  });
   this.pending.set(key,{promise,scope});return promise;
  }
  groups(force=false){return this.cached('groups',force,scope=>this.request('groups',encodeGroups(),decodeGroups,scope));}
@@ -51,10 +61,21 @@ export class NativeDirectory{
  async enrich(event){
   if(!event.group_id)return event;
   const scope=this.scope();
-  let members;try{
-   const fail=this.cache.get('failed:'+event.group_id);if(fail&&this.current(fail.scope)&&Date.now()-fail.at<30000)throw new Error('SCAN_COOLDOWN');
-   members=await this.members(event.group_id);
-  }catch{if(this.current(scope))this.cache.set('failed:'+event.group_id,{at:Date.now(),scope});event.member_scan_error='GROUP_MEMBER_SCAN_FAILED';return event;}
+  const failureKey = 'failed:' + event.group_id;
+  const failure = this.cache.get(failureKey);
+  const coolingDown = failure && this.current(failure.scope) && Date.now() - failure.at < 30000;
+  let members;
+  if (!coolingDown) {
+   try {
+    members = await this.members(event.group_id);
+   } catch {
+    if (this.current(scope)) this.#storeEntry(failureKey, { at: Date.now(), scope });
+   }
+  }
+  if (!members) {
+   event.member_scan_error = 'GROUP_MEMBER_SCAN_FAILED';
+   return event;
+  }
   const byId=new Map(members.map(x=>[x.user_id,x])),byUid=new Map(members.filter(x=>x.uid).map(x=>[x.uid,x]));
   const sender=byId.get(event.user_id);if(sender)event.sender={...event.sender,...sender};
   for(const seg of event.message){

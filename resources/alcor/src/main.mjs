@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import manifest from '../package.json' with { type: 'json' };
 import { loadConfig } from './config.mjs';
 import { Backend } from './backend.mjs';
 import { NativeBackend } from './native-backend.mjs';
@@ -30,7 +31,7 @@ try {
   } else {
     const bridge = createBridge(config,{management:{configFile:path.resolve(values.config),stateFile:path.join(path.dirname(path.resolve(values.config)),'console-settings.json')}});
     const endpoints = await bridge.listen();
-    console.log(JSON.stringify({ name: 'Alcor', version: '0.1.0', ...endpoints, readOnly: config.readOnly, backendType:config.backend.type??'onebot' }));
+    console.log(JSON.stringify({ name: 'Alcor', version: manifest.version, ...endpoints, readOnly: config.readOnly, backendType:config.backend.type??'onebot' }));
     let closing = false;
     const stop = async () => { if (closing) return; closing = true; await bridge.close(); };
     process.once('SIGINT', stop); process.once('SIGTERM', stop);

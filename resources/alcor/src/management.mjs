@@ -1,16 +1,34 @@
 import fs from 'node:fs';import path from 'node:path';import os from 'node:os';
 import {discoverQQ} from '../native-core/discovery.mjs';
-import {BridgeError} from './backend.mjs';import {normalizeConfig} from './config.mjs';
+import {BridgeError} from './backend.mjs';import {normalizeConfig,readConfigJson} from './config.mjs';
 import {NATIVE_ACTIONS} from './native-backend.mjs';
 const observed=JSON.parse(fs.readFileSync(new URL('./action-catalog.json',import.meta.url),'utf8')).actions;
 const nativeActions=new Set(NATIVE_ACTIONS);
 const catalog=[...observed,...NATIVE_ACTIONS.filter(action=>!observed.some(row=>row.action===action)).map(action=>({action,module:'native'}))];
 const defaults={theme:'system',accent:'blue',oled:false,compact:false};
 const bad=()=>{throw new BridgeError('INVALID_MANAGEMENT_SETTINGS',400);};
-function atomic(file,value){if(!file)return;fs.mkdirSync(path.dirname(file),{recursive:true});const tmp=file+'.'+process.pid+'.tmp';fs.writeFileSync(tmp,JSON.stringify(value,null,2));fs.renameSync(tmp,file);}
+function atomic(file,value){
+  if(!file)return;
+  fs.mkdirSync(path.dirname(file),{recursive:true});
+  const tmp=file+'.'+process.pid+'.tmp';
+  try {
+    fs.writeFileSync(tmp,JSON.stringify(value,null,2));
+    fs.renameSync(tmp,file);
+  } catch (error) {
+    try { fs.rmSync(tmp,{force:true}); } catch { /* Preserve the save error. */ }
+    throw error;
+  }
+}
 export function createManagement({config,backend,status,inventory=discoverQQ,stateFile,configFile,nativeResume}){
-  let settings={...defaults};try{const disk=JSON.parse(fs.readFileSync(stateFile,'utf8'));settings={...defaults,...validateSettings(disk)};}catch{}
+  let settings={...defaults};try{const disk=readConfigJson(stateFile);settings={...defaults,...validateSettings(disk)};}catch{}
   let serial=0;const logs=[];let lastCpu=os.cpus();let processTask=null;let pendingNodes=null;let pendingTransports=null;
+  function configForNextStart(){
+    const { host, port } = pendingNodes ?? config.listen;
+    return {
+      ...config, ...pendingTransports, listen: { ...config.listen, host, port },
+      readOnly: pendingNodes?.readOnly ?? config.readOnly
+    };
+  }
   function log(level,module,message){logs.push({id:++serial,time:new Date().toISOString(),level,module,message});if(logs.length>500)logs.shift();}
   function validateSettings(input){
     if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!Object.hasOwn(defaults,k)))bad();
@@ -48,7 +66,13 @@ export function createManagement({config,backend,status,inventory=discoverQQ,sta
     }
     if(route==='settings'){
       if(method==='GET')return settings;
-      if(method==='POST'){settings={...settings,...validateSettings(body)};atomic(stateFile,settings);log('info','settings','外观设置已保存');return settings;}
+      if(method==='POST'){
+        const next={...settings,...validateSettings(body)};
+        atomic(stateFile,next);
+        settings=next;
+        log('info','settings','外观设置已保存');
+        return settings;
+      }
     }
     if(route==='logs'&&method==='GET')return {entries:logs,capacity:500};
     if(route==='logs/clear'&&method==='POST'){logs.length=0;log('info','logs','运行日志已清空');return {cleared:true};}
@@ -73,8 +97,8 @@ export function createManagement({config,backend,status,inventory=discoverQQ,sta
             return row;
           });
         }
-        let next;try{next=normalizeConfig({...config,...fields});}catch{bad();}
-        const saved=JSON.parse(fs.readFileSync(configFile,'utf8'));
+        let next;try{next=normalizeConfig({...configForNextStart(),...fields});}catch{bad();}
+        const saved=readConfigJson(configFile);
         saved.httpCallbacks=next.httpCallbacks;saved.reverseWebSockets=next.reverseWebSockets;
         atomic(configFile,saved);pendingTransports={httpCallbacks:next.httpCallbacks,reverseWebSockets:next.reverseWebSockets};
         log('info','nodes','事件回调与反向连接配置已保存，重启后应用');return {saved:true,restartRequired:true};
@@ -84,10 +108,15 @@ export function createManagement({config,backend,status,inventory=discoverQQ,sta
       if(method==='GET')return {active:{host:config.listen.host,port:config.listen.port,readOnly:config.readOnly},pending:pendingNodes,editable:!!configFile,transports:[{type:'HTTP',enabled:true},{type:'WebSocket',enabled:true,path:'/events'},{type:'HTTP 回调',enabled:config.httpCallbacks.length>0,implemented:true},{type:'反向 WebSocket',enabled:config.reverseWebSockets.length>0,implemented:true}]};
       if(method==='POST'){
         if(Object.keys(body).some(k=>!['host','port','readOnly'].includes(k)))bad();
-        let next;try{next=normalizeConfig({...config,listen:{...config.listen,...body},readOnly:body.readOnly??config.readOnly});}catch{bad();}
+        const staged = configForNextStart();
+        const { readOnly, ...listenPatch } = body;
+        let next;
+        try {
+          next=normalizeConfig({...staged,listen:{...staged.listen,...listenPatch},readOnly:readOnly??staged.readOnly});
+        } catch { bad(); }
         if(next.listen.port===0)bad();
         if(!configFile)throw new BridgeError('CONFIG_FILE_NOT_WRITABLE_IN_THIS_SESSION',409);
-        const saved=JSON.parse(fs.readFileSync(configFile,'utf8'));saved.listen={...saved.listen,host:next.listen.host,port:next.listen.port};saved.readOnly=next.readOnly;
+        const saved=readConfigJson(configFile);saved.listen={...saved.listen,host:next.listen.host,port:next.listen.port};saved.readOnly=next.readOnly;
         atomic(configFile,saved);pendingNodes={host:next.listen.host,port:next.listen.port,readOnly:next.readOnly};log('info','nodes','节点配置已保存，重启后应用');return {saved:true,restartRequired:true,pending:pendingNodes};
       }
     }

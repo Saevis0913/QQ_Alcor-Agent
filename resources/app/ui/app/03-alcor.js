@@ -156,10 +156,11 @@ async function loadAlcorPage({ quiet = false } = {}) {
 }
 
 function renderOneBotEdition(box, status, quiet) {
-  const { httpUrl, wsUrl, hasToken } = status.onebotEdition;
+  const { httpUrl, wsUrl, hasToken, hasHttpToken } = status.onebotEdition;
   const account = status.onebot?.self?.userId;
   const connected = status.onebot?.connected === true;
-  const connectionState = account && connected ? `已连接账号 ${account}` : connected ? '正在确认账号' : '尚未连接';
+  const connectionState = account && connected ? `已连接账号 ${account}`
+    : status.onebot?.diagnosis || (connected ? '正在确认账号' : '尚未连接');
   if (quiet && box.querySelector('#onebot-connection-form')) {
     box.querySelector('#onebot-edition-state').textContent = connectionState;
     return;
@@ -173,9 +174,11 @@ function renderOneBotEdition(box, status, quiet) {
         <input id="onebot-http" type="url" value="${esc(httpUrl)}" placeholder="http://127.0.0.1:3000" required></div>
       <div class="field"><label for="onebot-ws">WebSocket 事件地址</label>
         <input id="onebot-ws" type="url" value="${esc(wsUrl)}" placeholder="ws://127.0.0.1:3001" required></div>
-      <div class="field"><label for="onebot-token">访问令牌</label>
+      <div class="field"><label for="onebot-token">通用访问令牌</label>
         <input id="onebot-token" type="password" autocomplete="off" placeholder="${hasToken ? '留空沿用已保存的令牌' : '后端未要求时可留空'}"></div>
-      <label class="checkbox-row"><input id="onebot-clear-token" type="checkbox">清除已保存的令牌</label>
+      <div class="field"><label for="onebot-http-token">HTTP 专用令牌（可选）</label>
+        <input id="onebot-http-token" type="password" autocomplete="off" placeholder="${hasHttpToken ? '留空保留已保存的 HTTP 令牌' : '默认使用通用令牌'}"></div>
+      <label class="checkbox-row"><input id="onebot-clear-token" type="checkbox">清除两个已保存的令牌</label>
       <div class="alcor-actions">
         <button class="btn btn-primary" type="submit">保存并连接</button>
         <button class="btn" type="button" id="onebot-environment">安装导航与环境检测</button>
@@ -190,22 +193,22 @@ function renderOneBotEdition(box, status, quiet) {
     const button = form.querySelector('button[type="submit"]');
     const hint = form.querySelector('#onebot-edition-result');
     const token = form.querySelector('#onebot-token');
+    const httpToken = form.querySelector('#onebot-http-token');
     const clear = form.querySelector('#onebot-clear-token');
     const input = { httpUrl: form.querySelector('#onebot-http').value.trim(), wsUrl: form.querySelector('#onebot-ws').value.trim() };
-    if (clear.checked || token.value) {
-      input.accessToken = clear.checked ? '' : token.value;
-      input.httpAccessToken = '';
-    }
+    if (clear.checked || token.value) input.accessToken = clear.checked ? '' : token.value;
+    if (clear.checked || httpToken.value) input.httpAccessToken = clear.checked ? '' : httpToken.value;
     button.disabled = true;
     hint.textContent = '正在保存…';
     try {
       await api('/api/onebot/connection', { method: 'POST', headers: { 'content-type': 'application/json',
         'x-console-token': CONSOLE_MARKER, 'x-alcor-local-action': 'configure-onebot' }, body: JSON.stringify(input) });
       token.value = '';
+      httpToken.value = '';
       clear.checked = false;
       hint.textContent = '已保存。连接进度见上方账号状态。';
       await refreshStatus();
-      await loadAlcorPage({ quiet: true });
+      await loadAlcorPage();
     } catch (error) { hint.textContent = String(error.message || error); }
     finally { button.disabled = false; }
   });

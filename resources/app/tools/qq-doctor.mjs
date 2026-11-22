@@ -4,61 +4,43 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { diagnoseQQ, scanFrameworkDirs, qqInstallRoots, formatReport } from '../src/qq-diagnosis.js';
+import { diagnoseQQ, readQQProcessSnapshot, scanFrameworkDirs, qqInstallRoots, formatReport } from '../src/qq-diagnosis.js';
 import { probeQQCompat } from '../src/qq-compat.js';
+import { createAlcorRuntime } from '../src/alcor-runtime.js';
+import { dataDirName } from '../src/profile.js';
+import { readConfigJson } from '../../alcor/src/config.mjs';
+import { inspectStandardConnection } from '../src/standard-connection.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = process.env.ALCOR_DATA_DIR || path.resolve(here, '../../../data');
+const dataDir = process.env.ALCOR_DATA_DIR || process.env.ALCOR_AGENT_DATA_DIR || path.resolve(here, '../../..', dataDirName());
 const json = process.argv.includes('--json');
 
-const report = { at: new Date().toISOString(), dataDir, running: false, backendReady: false, processes: [], connection: null, frameworkDirs: [], configError: '' };
-let connection = null;
-try {
-  const config = JSON.parse(fs.readFileSync(path.join(dataDir, 'alcor.config.json'), 'utf8'));
-  const host = String(config?.listen?.host || '127.0.0.1');
-  const port = Number(config?.listen?.port || 5310);
-  const token = String(config?.listen?.token || '');
-  connection = { url: `http://${host.includes(':') ? `[${host}]` : host}:${port}`, token };
-  report.backendType = config?.backend?.type || 'onebot';
-} catch (error) {
-  report.configError = `读不到 ${path.join(dataDir, 'alcor.config.json')}：${error.message}`;
-}
-
-async function getJson(url, token, timeout = 4000) {
-  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeout) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
-
-if (connection) {
+const report = { at: new Date().toISOString(), dataDir, running: false, backendReady: false,
+  processes: [], connection: null, frameworkDirs: [], configError: '', processScanError: '' };
+const settingsFile = path.join(dataDir, 'config.json');
+const appRoot = path.resolve(here, '..');
+const getSettings = () => fs.existsSync(settingsFile) ? readConfigJson(settingsFile)?.alcor : null;
+const runtime = createAlcorRuntime({ dataDir, appRoot, getSettings });
+const standard = fs.existsSync(path.join(appRoot, 'onebot-edition.json'));
+const state = standard ? await inspectStandardConnection(getSettings).catch(() => ({
+  directOneBot: true, backendType: 'onebot', running: false, backendReady: false, code: 'ONEBOT_PROBE_UNAVAILABLE'
+})) : await runtime.inspect();
+Object.assign(report, { running: state.running, backendReady: state.backendReady, coreCode: state.code,
+  backendType: state.backendType, directOneBot: state.directOneBot, coreVersion: state.version, configError: state.error,
+  connection: state.connection ?? null, statusOnline: state.statusOnline, statusError: state.statusError });
+if (state.running && state.backendType === 'native') {
   try {
-    const health = await getJson(`${connection.url}/health`, connection.token);
-    report.running = health?.name === 'Alcor' && health?.listening === true;
-    report.coreVersion = health?.version || '';
-    const processes = await getJson(`${connection.url}/manage/processes`, connection.token);
-    report.processes = Array.isArray(processes?.processes) ? processes.processes : [];
-    report.connection = health?.backend || processes?.connection || null;
-    if (report.running) {
-      try {
-        const status = await getJson(`${connection.url}/get_status`, connection.token);
-        // 就绪以核心自述为准：/manage/processes 的 connection.receiveReady 在 native 后端恒为 false。
-        // get_status 回的是 {status:'ok',retcode:0,data:{online}},没有 ok 字段。
-        report.backendReady = status?.data?.online === true && health?.backend?.ws === 'open' && health?.backend?.receiveReady === true;
-      } catch { /* 核心活着但后端答不上来，照样能给出进程级结论 */ }
-    }
+    const result = await runtime.manage('processes', { timeoutMs: 4000 });
+    if (!result.ok) throw new Error('HTTP ' + result.status);
+    const snapshot = readQQProcessSnapshot(result.body);
+    report.processes = snapshot.processes;
+    report.connection = { ...report.connection, ...snapshot.connection,
+      receiveReady: state.receiveReady ?? snapshot.connection?.receiveReady };
     report.frameworkDirs = scanFrameworkDirs(qqInstallRoots(report.processes));
-  } catch (error) {
-    report.running = false;
-    report.configError = report.configError || `核心没有响应：${error.message}`;
-  }
+  } catch (error) { report.processScanError = error.message; }
+  try { report.compat = await probeQQCompat({ processRows: report.processes }); } catch { report.compat = null; }
 }
-
-// 版本与外来框架之外的环境事实（权限/会话/安全策略/注入器/宿主 DLL）一并取证，
-// 否则「查不出原因」的机器仍然只会得到一句笼统结论。
-try {
-  report.compat = await probeQQCompat({ processRows: report.processes });
-} catch { report.compat = null; }
-const verdict = diagnoseQQ({ ...report, lastFailure: report.connection?.lastFailure || null });
+const verdict = diagnoseQQ(report);
 if (json) {
   console.log(JSON.stringify({ report, verdict }, null, 2));
 } else {
@@ -69,8 +51,8 @@ if (json) {
     console.log(`报告已写入 ${file}`);
   } catch { /* 只读运行，写不进也不影响结论 */ }
   if (report.configError) console.log(`配置：${report.configError}`);
-  formatReport({ ...verdict, running: report.running, backendReady: report.backendReady });
+  formatReport(verdict);
 }
 
-const codes = { ALREADY_CONNECTED: 0, READY_TO_CONNECT: 0, RECEIVE_NOT_READY: 1, HOST_PRESENT: 1, FOREIGN_MODULES: 1, NO_QQ_RUNNING: 1, UNSUPPORTED_BUILD: 2, PROCESS_UNREADABLE: 4, ELEVATION_MISMATCH: 5, SESSION_MISMATCH: 5, ARCH_MISMATCH: 2, HOST_RUNTIME_BROKEN: 6, INJECTION_BLOCKED: 7, PROFILE_SCANNER_MISSING: 6, PROFILE_SCAN_FAILED: 2, PROFILE_SCAN_MISMATCH: 3, PROFILE_WRAPPER_NOT_FOUND: 2, PROFILE_VERSION_UNSUPPORTED: 2, PROFILE_PATCH_FAILED: 6, PROFILE_VERIFY_FAILED: 6, PROFILE_PACK_FAILED: 6, HOST_TARGET_DENIED: 7, HOST_LOAD_BLOCKED: 6, HOST_ENTRY_FAILED: 6, HOST_ARTIFACT_INVALID: 6, HOST_LOADER_MISSING: 6, HOST_LOADER_TIMEOUT: 6, HOST_LOADER_FAILED: 6, HOST_THREAD_PENDING: 6, HOST_REFERENCE_STUCK: 6, HOST_START_INCOMPLETE: 6 };
-process.exitCode = report.running ? (codes[verdict.code] ?? 3) : 3;
+const codes = { ALREADY_CONNECTED: 0, READY_TO_CONNECT: 0, RECEIVE_NOT_READY: 1, HOST_PRESENT: 1, FOREIGN_MODULES: 1, NO_QQ_RUNNING: 1, UNSUPPORTED_BUILD: 2, PROCESS_SCAN_FAILED: 4, PROCESS_UNREADABLE: 4, ELEVATION_MISMATCH: 5, SESSION_MISMATCH: 5, ARCH_MISMATCH: 2, HOST_RUNTIME_BROKEN: 6, INJECTION_BLOCKED: 7, PROFILE_SCANNER_MISSING: 6, PROFILE_SCAN_FAILED: 2, PROFILE_SCAN_MISMATCH: 3, PROFILE_WRAPPER_NOT_FOUND: 2, PROFILE_VERSION_UNSUPPORTED: 2, PROFILE_PATCH_FAILED: 6, PROFILE_VERIFY_FAILED: 6, PROFILE_PACK_FAILED: 6, HOST_TARGET_DENIED: 7, HOST_ALREADY_PRESENT: 7, HOST_LOAD_BLOCKED: 6, HOST_ENTRY_FAILED: 6, HOST_ARTIFACT_INVALID: 6, HOST_LOADER_MISSING: 6, HOST_LOADER_TIMEOUT: 6, HOST_LOADER_FAILED: 6, HOST_THREAD_PENDING: 6, HOST_REFERENCE_STUCK: 6, HOST_START_INCOMPLETE: 6 };
+process.exitCode = codes[verdict.code] ?? 3;

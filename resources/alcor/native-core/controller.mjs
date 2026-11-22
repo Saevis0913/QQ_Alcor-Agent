@@ -114,7 +114,7 @@ export class NativeController {
       const loaded=await runLoader(loaderFn,pid,owner.nonce,'qq',creation);
       if(loaded.status!==0||!loaded.loaderReferenceReleased||loaded.pendingThread){
         const failure=loaderFailureCode(loaded);
-        this.lastFailure={code:failure,stage:loaded.stage||null,status:typeof loaded.status==='number'?loaded.status:null,at:new Date().toISOString()};
+        this.lastFailure={code:failure,pid,stage:loaded.stage||null,status:typeof loaded.status==='number'?loaded.status:null,at:new Date().toISOString()};
         throw new Error(failure);
       }
       this.owner=owner;
@@ -131,7 +131,7 @@ export class NativeController {
         }).finally(()=>{this.heartbeatPending=false;});},this.heartbeatMs);this.timer.unref();
         return this.snapshot();
       }catch(error){await this.stopOwned();throw error;}
-    }).catch(error=>{this.lastError=/^[A-Z_]+$/.test(error.message)?error.message:'NATIVE_CONNECT_FAILED';this.lastFailure={code:this.lastError,stage:error?.stage??this.lastFailure?.stage??null,status:error?.status??this.lastFailure?.status??null,detail:error?.detail??null,at:new Date().toISOString()};throw new Error(this.lastError);});
+    }).catch(error=>{this.lastError=/^[A-Z_]+$/.test(error.message)?error.message:'NATIVE_CONNECT_FAILED';this.lastFailure={code:this.lastError,pid,stage:error?.stage??this.lastFailure?.stage??null,status:error?.status??this.lastFailure?.status??null,detail:error?.detail??null,at:new Date().toISOString()};throw new Error(this.lastError);});
     this.pending={pid,startedAt,account,promise};promise.finally(()=>{if(this.pending?.promise===promise)this.pending=null;}).catch(()=>{});return promise;
   }
   request(operation, options = {}) {

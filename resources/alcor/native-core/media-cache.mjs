@@ -7,8 +7,12 @@ export function loadMediaCache(file){
   if(fs.statSync(file).size>MAX_BYTES)return rows;
   const saved=JSON.parse(fs.readFileSync(file,'utf8'));if(saved.version!==1||!Array.isArray(saved.rows))return rows;
   for(const row of saved.rows.slice(-LIMIT)){
-   if(!/^alcor-media-[a-f0-9]{64}$/.test(row.id)||!/^\d{1,10}$/.test(row.account)||!['image','video','record','file'].includes(row.kind)||typeof row.selfUid!=='string'||row.selfUid.length>82||typeof row.index!=='string'||row.index.length>2732)continue;
-   const publicSticker=row.kind==='image'&&/^[a-f0-9]{32}$/.test(row.publicSticker||'')?row.publicSticker:null;
+   if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+   if (typeof row.id !== 'string' || !/^alcor-media-[a-f0-9]{64}$/.test(row.id)) continue;
+   if (typeof row.account !== 'string' || !/^\d{1,10}$/.test(row.account)) continue;
+   if (!['image', 'video', 'record', 'file'].includes(row.kind) || typeof row.selfUid !== 'string' || row.selfUid.length > 82) continue;
+   if (typeof row.index !== 'string' || row.index.length > 2732) continue;
+   const publicSticker = row.kind === 'image' && typeof row.publicSticker === 'string' && /^[a-f0-9]{32}$/.test(row.publicSticker) ? row.publicSticker : null;
    const index=Buffer.from(row.index,'base64');if((!index.length&&!publicSticker)||index.length>2048)continue;
    const data={file:row.id};for(const key of ['name','summary'])if(typeof row.data?.[key]==='string')data[key]=row.data[key].slice(0,160);
    if(row.kind==='file'){
@@ -22,6 +26,7 @@ export function loadMediaCache(file){
    let forwardScope;
    if(row.forwardScope){
     const s=row.forwardScope,chat=s.group_id||s.user_id;
+    if (typeof s.self_id !== 'string' && typeof s.self_id !== 'number') continue;
     if(!Number.isSafeInteger(s.message_id)||s.message_id<1||String(s.self_id)!==row.account||!Number.isSafeInteger(chat)||chat<1||chat>0xffffffff||Boolean(s.group_id)===Boolean(s.user_id))continue;
     forwardScope={message_id:s.message_id,self_id:Number(row.account),...(s.group_id?{group_id:s.group_id}:{user_id:s.user_id})};data.forward_scope=forwardScope;
    }
@@ -34,6 +39,28 @@ export function saveMediaCache(file,rows){
  if(!file)return;
  // Only resource descriptors are persisted, never temporary signed CDN URLs.
  const values=[...rows.entries()].filter(([,r])=>r.descriptor.index||r.descriptor.publicSticker).slice(-LIMIT).map(([id,r])=>({id,account:r.account,kind:r.descriptor.kind,selfUid:r.descriptor.selfUid,forwardScope:r.descriptor.forwardScope,groupId:r.descriptor.groupId||0,peerId:r.descriptor.peerId||0,index:Buffer.from(r.descriptor.index||[]).toString('base64'),marketFace:r.descriptor.marketFace?.length<=2048?Buffer.from(r.descriptor.marketFace).toString('base64'):undefined,publicSticker:r.descriptor.publicSticker,data:r.descriptor.data}));
- const text=JSON.stringify({version:1,rows:values});if(Buffer.byteLength(text)>MAX_BYTES)throw new Error('MEDIA_CACHE_LIMIT');
- fs.mkdirSync(path.dirname(file),{recursive:true});const temp=file+'.tmp';fs.writeFileSync(temp,text);fs.renameSync(temp,file);
+ const prefix = '{"version":1,"rows":[';
+ const suffix = ']}';
+ const limit = MAX_BYTES - Buffer.byteLength(prefix + suffix);
+ const persisted = [];
+ let remaining = limit;
+ for (let i = values.length - 1; i >= 0; i--) {
+  const json = JSON.stringify(values[i]);
+  const bytes = Buffer.byteLength(json);
+  if (bytes > limit) continue;
+  const size = bytes + Number(persisted.length > 0);
+  if (size > remaining) break;
+  persisted.push(json);
+  remaining -= size;
+ }
+ const text = prefix + persisted.reverse().join(',') + suffix;
+ fs.mkdirSync(path.dirname(file),{recursive:true});
+ const temp = file + '.' + process.pid + '.tmp';
+ try {
+  fs.writeFileSync(temp,text);
+  fs.renameSync(temp,file);
+ } catch (error) {
+  try { fs.rmSync(temp,{force:true}); } catch { /* Preserve the save error. */ }
+  throw error;
+ }
 }

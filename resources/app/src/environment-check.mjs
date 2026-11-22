@@ -194,7 +194,7 @@ export async function collectEnvironment({installRoot,dataDir,phase='runtime',co
   await mediaChecks;
   if(!standard)add('NATIVE_SCOPE','info','当前原生能力','支持群聊和私聊文本、联系人和群成员查询，以及相应的入站媒体读取。媒体能力还取决于 QQ 资源及上述本地依赖。');
   const errors=checks.filter(c=>c.status==='error'),setup=checks.filter(c=>c.status==='setup');
-  return {schemaVersion:1,version: '0.3.2-as.2',checkedAt:new Date().toISOString(),installRoot:target,phase,checks,canInstall:errors.length===0,canRun:errors.length===0&&setup.length===0};
+  return {schemaVersion:1,version: '0.3.2-as.3',checkedAt:new Date().toISOString(),installRoot:target,phase,checks,canInstall:errors.length===0,canRun:errors.length===0&&setup.length===0};
 }
 export function formatEnvironmentReport(report){
   const labels={ok:'通过',error:'必须修复',setup:'待配置',warning:'提示',info:'说明'};

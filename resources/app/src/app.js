@@ -136,7 +136,11 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
   const alcorInspect = standard ? async () => {
     const ready = Boolean(onebot.connected && onebot.socket === confirmedAccountSocket &&
       onebot.selfId && onebot.selfId === store.activeAccount);
-    return { ...alcorRuntime.owned(), running: false, backendReady: ready, receiveReady: ready };
+    const denied = /Unexpected server response: (401|403)\b/i.test(onebot.lastConnectError);
+    return { ...alcorRuntime.owned(), running: false, backendType: 'onebot', directOneBot: true,
+      backendReady: ready, receiveReady: onebot.connected, statusOnline: ready ? true : null,
+      statusError: accountStatusError,
+      connection: { ws: onebot.connected ? 'open' : denied ? 'auth_failed' : 'disconnected' } };
   } : alcorRuntime.inspect;
   const alcorWebuiUrl = () => { try { return alcorRuntime.panelUrl(); } catch { return ''; } };
   const alcorPanelLoginUrl = () => alcorRuntime.panelLoginUrl();
@@ -366,6 +370,7 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
   let accountRefresh = null;
   let currentAccount = '';
   let confirmedAccountSocket = null;
+  let accountStatusError = '';
   let accountGeneration = 0;
   let stopping = false;
   let lastAccountRefresh = 0;
@@ -407,9 +412,14 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
     request.promise = onebot.call('get_login_info', {}, 3000).then(info => {
       if (!onebot.connected || onebot.socket !== socket) return;
       const id = confirmAccount(info);
-      if (id) confirmedAccountSocket = socket;
+      if (id) { confirmedAccountSocket = socket; accountStatusError = ''; }
       return id;
-    }).catch(() => {}).finally(() => { if (accountRefresh === request) accountRefresh = null; });
+    }).catch(error => {
+      if (standard && socketIsCurrent(socket) && [401, 403].includes(error?.httpStatus)) {
+        confirmedAccountSocket = null;
+        accountStatusError = 'UPSTREAM_HTTP_' + error.httpStatus;
+      }
+    }).finally(() => { if (accountRefresh === request) accountRefresh = null; });
     accountRefresh = request;
     return request.promise;
   }
@@ -445,6 +455,7 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
     if (connected) refreshFriends();
     else {
       confirmedAccountSocket = null;
+      accountStatusError = '';
       lastFriendRefresh = 0;
     }
   });

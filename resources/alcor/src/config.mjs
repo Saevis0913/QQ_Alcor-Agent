@@ -2,15 +2,34 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const loopbacks = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+const httpProtocols = ['http:', 'https:'];
+const wsProtocols = ['ws:', 'wss:'];
+const hasHttpEndpoint = backend => backend.httpUrl != null && backend.httpUrl !== '';
+
+const bindHost = host => host === '[::1]' ? '::1' : host;
+const endpointPort = url => Number(url.port || (['https:', 'wss:'].includes(url.protocol) ? 443 : 80));
+
+export function readConfigJson(filename) {
+  const bytes = fs.readFileSync(filename);
+  let encoding = 'utf-8';
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) encoding = 'utf-16le';
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) encoding = 'utf-16be';
+  return JSON.parse(new TextDecoder(encoding, { fatal: true }).decode(bytes));
+}
 function number(value, fallback, min, max, name) {
   const selected = value ?? fallback;
   if (!Number.isInteger(selected) || selected < min || selected > max) throw new Error(`Invalid ${name}`);
   return selected;
 }
-function endpoint(value, protocols, name) {
+function endpoint(value, protocols, name, listen) {
   let url;
   try { url = new URL(value); } catch { throw new Error(`Invalid ${name}`); }
   if (!protocols.includes(url.protocol) || !loopbacks.has(url.hostname) || url.username || url.password || url.search || url.hash) throw new Error(`Invalid ${name}: requires a loopback endpoint without embedded credentials`);
+  const host = bindHost(url.hostname);
+  if (listen?.port === endpointPort(url) &&
+      (listen.host === host || listen.host === 'localhost' || host === 'localhost')) {
+    throw new Error(`Invalid ${name}: endpoint points to this core`);
+  }
   return url.href.replace(/\/$/, '');
 }
 function outboundRows(value, kind, listen) {
@@ -24,7 +43,7 @@ function outboundRows(value, kind, listen) {
     let url;
     try { url = new URL(row.url); } catch { throw new Error(`Invalid ${kind} URL`); }
     const local = loopbacks.has(url.hostname);
-    const port = Number(url.port || (['https:', 'wss:'].includes(url.protocol) ? 443 : 80));
+    const port = endpointPort(url);
     if (!(ws ? ['ws:', 'wss:'] : ['http:', 'https:']).includes(url.protocol) ||
         (!local && !['https:', 'wss:'].includes(url.protocol)) || url.username || url.password || url.hash || url.search ||
         (local && port === (listen.port ?? 5310))) throw new Error(`Invalid ${kind} endpoint: use local or encrypted external URL, not this core`);
@@ -37,6 +56,19 @@ function outboundRows(value, kind, listen) {
       maxQueue: number(row.maxQueue, 64, 1, 256, 'callback maxQueue') };
   });
 }
+function oneBotEndpoints(backend, listen) {
+  const httpUrl = hasHttpEndpoint(backend) ? endpoint(backend.httpUrl, httpProtocols, 'backend.httpUrl', listen) : '';
+  const wsUrl = endpoint(backend.wsUrl, wsProtocols, 'backend.wsUrl', listen);
+  if (!httpUrl) {
+    const route = new URL(wsUrl).pathname.replace(/\/+$/, '');
+    if (route === '/event' || route === '/api') {
+      throw new Error('Invalid backend.wsUrl: a universal WebSocket endpoint is required without HTTP');
+    }
+    if (backend.httpToken) throw new Error('Invalid backend.httpToken: requires backend.httpUrl');
+  }
+  return { httpUrl, wsUrl, httpToken: backend.httpToken ?? '', wsToken: backend.wsToken ?? '' };
+}
+
 export function normalizeConfig(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid configuration');
   const listen = input.listen ?? {};
@@ -50,9 +82,10 @@ export function normalizeConfig(input) {
   if (input.readOnly !== undefined && typeof input.readOnly !== 'boolean') throw new Error('Invalid readOnly');
   if (input.compatibility !== undefined && !['passthrough', 'legacy-onebot'].includes(input.compatibility)) throw new Error('Invalid compatibility mode');
   for (const key of ['httpToken', 'wsToken']) if (backend[key] !== undefined && (typeof backend[key] !== 'string' || !/^[\x20-\x7e]*$/.test(backend[key]))) throw new Error(`Invalid backend.${key}`);
+  const binding = { host: bindHost(listen.host ?? '127.0.0.1'), port: number(listen.port, 5310, 0, 65535, 'listen.port'), token: listen.token };
   const result = {
-    listen: { host: listen.host ?? '127.0.0.1', port: number(listen.port, 5310, 0, 65535, 'listen.port'), token: listen.token },
-    backend: native ? {type:'native'} : { httpUrl: endpoint(backend.httpUrl, ['http:', 'https:'], 'backend.httpUrl'), wsUrl: endpoint(backend.wsUrl, ['ws:', 'wss:'], 'backend.wsUrl'), httpToken: backend.httpToken ?? '', wsToken: backend.wsToken ?? '' },
+    listen: binding,
+    backend: native ? { type: 'native' } : oneBotEndpoints(backend, binding),
     readOnly: input.readOnly ?? true,
     compatibility: input.compatibility ?? 'passthrough',
     requestTimeoutMs: number(input.requestTimeoutMs, 15000, 1, 300000, 'requestTimeoutMs'),
@@ -77,17 +110,27 @@ export function normalizeConfig(input) {
 
 export function loadConfig(filename) {
   let input;
-  try { input = JSON.parse(fs.readFileSync(filename, 'utf8')); } catch { throw new Error('Cannot read configuration JSON'); }
-  if(input.backend?.type==='native')return normalizeConfig(input);
+  try { input = readConfigJson(filename); } catch { throw new Error('Cannot read configuration JSON'); }
+  if (input?.backend?.type === 'native') return normalizeConfig(input);
   // This file is a user-selected local OneBot server config, not a QQ login/session credential.
-  if (input.backend?.onebotConfigFile) {
+  if (input?.backend?.onebotConfigFile) {
     let source;
-    try { source = JSON.parse(fs.readFileSync(path.resolve(path.dirname(filename), input.backend.onebotConfigFile), 'utf8')); } catch { throw new Error('Cannot read selected OneBot connection configuration'); }
-    for (const [kind, urlKey, tokenKey] of [['httpServers', 'httpUrl', 'httpToken'], ['wsServers', 'wsUrl', 'wsToken']]) {
-      const url = new URL(endpoint(input.backend[urlKey], [kind === 'httpServers' ? 'http:' : 'ws:'], `backend.${urlKey}`));
-      const port = Number(url.port || (url.protocol === 'http:' || url.protocol === 'ws:' ? 80 : 443));
-      const network = source.networks ?? source.network;
-      const entries = (network?.[kind] ?? []).filter(row => Number(row.port) === port && loopbacks.has(row.host || '127.0.0.1'));
+    try { source = readConfigJson(path.resolve(path.dirname(filename), input.backend.onebotConfigFile)); } catch { throw new Error('Cannot read selected OneBot connection configuration'); }
+    const network = source?.networks ?? source?.network;
+    for (const [kind, urlKey, tokenKey, protocols] of [
+      ['httpServers', 'httpUrl', 'httpToken', httpProtocols],
+      ['wsServers', 'wsUrl', 'wsToken', wsProtocols]
+    ]) {
+      if (urlKey === 'httpUrl' && !hasHttpEndpoint(input.backend)) continue;
+      const url = new URL(endpoint(input.backend[urlKey], protocols, `backend.${urlKey}`));
+      const port = endpointPort(url);
+      const rows = Array.isArray(network?.[kind]) ? network[kind] : [];
+      const targetHost = bindHost(url.hostname);
+      const entries = rows.filter(row => {
+        if (!row || row.enable === false || Number(row.port) !== port) return false;
+        const host = bindHost(row.host || '127.0.0.1');
+        return loopbacks.has(host) && (targetHost === host || targetHost === 'localhost' || host === 'localhost');
+      });
       if (entries.length !== 1) throw new Error(`Selected OneBot ${kind} entry is ambiguous or missing`);
       input.backend[tokenKey] = entries[0].accessToken ?? entries[0].token ?? '';
     }

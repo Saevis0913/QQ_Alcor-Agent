@@ -4,13 +4,15 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { loadConfig } from '../../alcor/src/config.mjs';
+import { queryOneBotStatus } from './standard-connection.js';
 
 export function readAlcorConnection(configFile) {
   const config = loadConfig(path.resolve(configFile));
   const host = config.listen.host.includes(':') ? `[${config.listen.host}]` : config.listen.host;
   const httpUrl = `http://${host}:${config.listen.port}`;
   return { httpUrl, wsUrl: httpUrl.replace('http:', 'ws:') + '/events', accessToken: config.listen.token,
-    httpAccessToken: config.listen.token, host: config.listen.host, port: config.listen.port };
+    httpAccessToken: config.listen.token, host: config.listen.host, port: config.listen.port,
+    backendType: config.backend.type ?? 'onebot' };
 }
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
@@ -28,13 +30,15 @@ export function createAlcorRuntime({ getSettings, dataDir, appRoot, nodeExecutab
   };
   // 冷启动/杀软扫描时第一次连本地核心常是瞬时超时；重试一次能把「真的没起来」
   // 和「还没起来」分开，避免界面上闪一下「无法响应」。ECONNREFUSED 不重试。
-  async function fetchWithRetry(url, init) {
-    try { return await fetch(url, init); }
+  async function fetchHealth(config) {
+    const request = () => fetch(config.httpUrl + '/health', { redirect: 'manual',
+      headers: { authorization: 'Bearer ' + config.accessToken }, signal: AbortSignal.timeout(1500) });
+    try { return await request(); }
     catch (error) {
       const code = error?.cause?.code;
       if (code === 'ECONNREFUSED') throw error;
       await delay(350);
-      return await fetch(url, init);
+      return await request();
     }
   }
   async function inspect() {
@@ -42,20 +46,30 @@ export function createAlcorRuntime({ getSettings, dataDir, appRoot, nodeExecutab
     try { config = connection(); }
     catch { return { ...owned(), running: false, backendReady: false, code: 'ALCOR_CONFIG_INVALID', error: 'Alcor 本地配置不可用', occupied: false }; }
     try {
-      const res = await fetchWithRetry(config.httpUrl + '/health', { headers: { authorization: `Bearer ${config.accessToken}` }, signal: AbortSignal.timeout(1500) });
-      if (res.status === 401) return { ...owned(), running: false, backendReady: false, occupied: true, code: 'ALCOR_AUTH_FAILED', error: 'Alcor 访问令牌不匹配，请核对所选配置' };
-      const health = await res.json();
-      if (!res.ok || health.name !== 'Alcor' || health.listening !== true) return { ...owned(), running: false, backendReady: false, occupied: true, code: 'ALCOR_IDENTITY_MISMATCH', error: '指定端口不是可验证的 Alcor 服务' };
-      let backendReady = false;
-      try {
-        const status = await fetch(config.httpUrl + '/get_status', { headers: { authorization: `Bearer ${config.accessToken}` }, signal: AbortSignal.timeout(1200) });
-        const body = await status.json();
-        backendReady = health.backend?.ws === 'open' && status.ok && body.status === 'ok' && body.data?.online === true;
-      } catch { /* The core is alive even when its QQ backend cannot answer. */ }
-      return { ...owned(), running: true, backendReady, backendType:health.backend?.type??'onebot', receiveReady:health.backend?.receiveReady??null, occupied: true, version: health.version, error: '', code: null };
+      const res = await fetchHealth(config);
+      const unavailable = { ...owned(), backendType: config.backendType, running: false, backendReady: false, occupied: true };
+      if (res.status === 401 || res.status === 403) {
+        await res.body?.cancel();
+        return { ...unavailable, code: 'ALCOR_AUTH_FAILED', error: '指定端口拒绝了核心健康检查，请核对监听地址和访问令牌' };
+      }
+      if (res.status >= 500) {
+        await res.body?.cancel();
+        return { ...unavailable, code: 'ALCOR_UNAVAILABLE', error: '核心健康检查返回 HTTP ' + res.status };
+      }
+      const health = await res.json().catch(error => { if (error instanceof SyntaxError) return null; throw error; });
+      if (!res.ok || health?.name !== 'Alcor' || health.listening !== true) return { ...unavailable, code: 'ALCOR_IDENTITY_MISMATCH', error: '指定端口未返回可验证的 Alcor 服务标识' };
+      const backend = health.backend ?? {};
+      const backendType = backend.type ?? config.backendType;
+      const connection = { ws: backend.ws, http: backend.http, receiveReady: backend.receiveReady,
+        connected: backend.connected, pid: backend.pid, accountLastFour: backend.accountLastFour,
+        lastFailure: backend.lastFailure, apiTransport: backend.apiTransport };
+      const { statusOnline, statusError } = await queryOneBotStatus(config.httpUrl, config.accessToken, { viaCore: true });
+      const backendReady = backend.ws === 'open' && backend.receiveReady !== false && statusOnline === true;
+      return { ...owned(), running: true, backendReady, backendType, connection, statusOnline, statusError,
+        receiveReady: backend.receiveReady ?? null, occupied: true, version: health.version, error: '', code: null };
     } catch (error) {
       const refused = error?.cause?.code === 'ECONNREFUSED' || error?.cause?.errors?.every(e => e.code === 'ECONNREFUSED');
-      return { ...owned(), running: false, backendReady: false, occupied: !refused,
+      return { ...owned(), running: false, backendReady: false, backendType: config.backendType, occupied: !refused,
         code: refused ? 'ALCOR_OFFLINE' : 'ALCOR_UNAVAILABLE', error: refused ? 'Alcor 核心未启动' : 'Alcor 无法响应，请检查端口或服务状态' };
     }
   }
@@ -99,7 +113,7 @@ export function createAlcorRuntime({ getSettings, dataDir, appRoot, nodeExecutab
   }
   async function manage(route, { method = 'GET', body = null, timeoutMs = 8000 } = {}) {
     const c = connection();
-    const res = await fetch(c.httpUrl + '/manage/' + route, { method,
+    const res = await fetch(c.httpUrl + '/manage/' + route, { method, redirect: 'error',
       headers: { authorization: 'Bearer ' + c.accessToken, ...(body ? { 'content-type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(timeoutMs) });
     const text = await res.text();

@@ -5,6 +5,15 @@ import path from 'node:path';
 
 export const SUPPORTED_QQ_VERSIONS = ['9.9.36-53644', '9.9.37-54395'];
 
+export function readQQProcessSnapshot(body) {
+  if (!Array.isArray(body?.processes) || body.processes.some(row =>
+    !row || typeof row !== 'object' || !Number.isSafeInteger(Number(row.pid)) || Number(row.pid) <= 0 ||
+    (row.foreignModules != null && !(Array.isArray(row.foreignModules) && row.foreignModules.every(name => typeof name === 'string'))))) {
+    throw new Error('核心返回的 QQ 进程清单格式无效。');
+  }
+  return { processes: body.processes, connection: body.connection ?? null };
+}
+
 // 其它框架在硬盘上常见的落点，只做「存在即提示」，不删除任何文件。
 const FRAMEWORK_DIRS = [
   ['LiteLoader', 'resources/app/app_launcher/LiteLoaderQQNT'],
@@ -54,20 +63,22 @@ export function pickRelaxedCandidate(processRows) {
 
 // 注入阶段的失败码：core 现在把加载器的 stage 翻成这些码，再也不用「HOST_START_INCOMPLETE」一把梭。
 const FAILURE_TEXT = {
-  HOST_TARGET_DENIED: ['注入被系统拒绝', '加载器没能拿到 QQ 进程的操作权：常见原因是 QQ 以管理员身份运行而 Alcor 不是、或两侧不在同一个 Windows 会话里。',
-    '把 QQ 和 Alcor 用同一种权限打开（都以管理员运行，或都不提权），然后重启 QQ 再连。'],
-  HOST_LOAD_BLOCKED: ['宿主 DLL 在 QQ 里加载失败', '安全软件、内存完整性（HVCI）或应用控制策略拦下了 alcor-host.dll 的加载；也见于 32 位 QQ。',
-    '在安全软件里给 Alcor 安装目录加白名单；关闭「内核隔离·内存完整性」后重启；确认 QQ 是 64 位版本。'],
-  HOST_ENTRY_FAILED: ['宿主加载了但没起来', 'DLL 已进入 QQ 进程，入口初始化失败；常见于 QQ 被兼容性模式/注入类插件改动过的环境。',
-    '关掉 QQ 的兼容性模式与第三方美化/注入工具，重启 QQ 后再连；仍失败请把判定码与 data/logs 当日日志一起反馈。'],
+  HOST_TARGET_DENIED: ['系统拒绝了本次进程访问', '核心收到进程访问被拒绝的结果。具体原因需结合系统记录确认。',
+    '导出排查报告，按失败时间核对 Windows 事件。已有获授权的本机 OneBot 服务时，可改用该服务接入。'],
+  HOST_ALREADY_PRESENT: ['Alcor 宿主已驻留', '核心报告目标进程中已有 Alcor 宿主。',
+    '重新扫描以确认宿主和消息通道的状态，仍未就绪时导出排查报告。'],
+  HOST_LOAD_BLOCKED: ['宿主 DLL 加载阶段失败', '核心报告宿主加载失败。具体原因需要结合原始状态和 Windows 事件确认。',
+    '先把 Alcor 安装目录加入安全软件排除项、确认内存完整性（HVCI）与智能应用控制没有拦这个 DLL，再重启 QQ 重试；仍失败导出报告，按失败时间和文件名核对 Windows 事件。'],
+  HOST_ENTRY_FAILED: ['宿主初始化失败', '核心报告宿主初始化失败。',
+    '导出本次报告，保留阶段、状态码和发生时间。已有获授权的本机 OneBot 服务时，可改用该服务接入。'],
   HOST_ARTIFACT_INVALID: ['随包宿主文件损坏或被替换', '加载器读到的 alcor-host.dll 与随包版本不一致，可能是安装不完整或被杀软改写。',
     '用安装包覆盖安装一次（覆盖安装不会动 data 目录），再重试连接。'],
   HOST_LOADER_MISSING: ['注入器不见了', 'resources/alcor/artifacts/native/qq-host-loader.exe 缺失，安装不完整或被杀软隔离。',
-    '用安装包覆盖安装；在杀软隔离区恢复 qq-host-loader.exe 并加白名单。'],
-  HOST_LOADER_TIMEOUT: ['注入器超时', '加载器 55 秒内没有返回，通常是 QQ 进程卡住或安全软件在逐个拦截系统调用。',
-    '重启 QQ 后重试；反复出现就把 Alcor 安装目录加入杀软白名单。'],
-  HOST_LOADER_FAILED: ['注入器无法运行', 'qq-host-loader.exe 起不来：缺少 VC++ 运行库、被杀软/应用控制策略拦住都是这一类。',
-    '安装 Microsoft Visual C++ 运行库（x64），把安装目录加白名单后重试。'],
+    '核对安装包来源和安全保护历史，再用可信发布包修复安装。'],
+  HOST_LOADER_TIMEOUT: ['加载器超时', '核心等待加载器响应时超时。',
+    '导出本次排查报告，核对超时时间附近的 Windows 事件。'],
+  HOST_LOADER_FAILED: ['加载器执行失败', '核心未取得加载器的有效结果。',
+    '先确认 resources/alcor/artifacts/native/qq-host-loader.exe 存在并能运行；缺失时用安装包覆盖安装一次，仍失败时装 VC++ 2015-2022 x64 运行库后重启 QQ 再试。'],
   HOST_THREAD_PENDING: ['注入线程没有收尾', '宿主已经写入目标进程，但远程线程没有按预期结束；QQ 可能停在半初始化状态。',
     '完全退出 QQ（任务栏退出，不是关窗口）后重新登录，再点连接。'],
   HOST_REFERENCE_STUCK: ['加载器引用没有释放', '注入完成后加载器没能释放对目标进程的引用，通常是 QQ 进程被挂起或调试器占用。',
@@ -89,19 +100,26 @@ const FAILURE_TEXT = {
   PROFILE_VERIFY_FAILED: ['补丁包自检未通过', '生成的 loader/DLL 配对包在回读校验时不一致，已整体丢弃、未用于注入。',
     '重试一次连接；反复出现请把判定码与日志反馈。'],
   PROFILE_PACK_FAILED: ['补丁包写入失败', '生成补丁包目录时发生 I/O 错误（权限不足、杀软拦截或磁盘问题），半成品已清理。',
-    '把 Alcor 安装目录与 ProgramData\\Alcor 加入杀软白名单后重试。']
+    '核对错误发生时的安装目录访问状态、可用磁盘空间和 Windows 事件。']
 };
 
 export function describeQQFailure(lastFailure) {
-  const code = typeof lastFailure?.code === 'string' ? lastFailure.code : null;
-  const entry = code ? FAILURE_TEXT[code] : null;
-  if (!entry) return null;
+  const code = typeof lastFailure?.code === 'string' ? lastFailure.code.trim() : '';
+  if (!code) return null;
+  const entry = Object.hasOwn(FAILURE_TEXT, code) ? FAILURE_TEXT[code] : [
+    'QQ 上次连接失败', '核心返回了连接错误。', '导出排查报告并反馈原始判定码。'
+  ];
   const stage = lastFailure?.stage ? `（阶段：${lastFailure.stage}）` : '';
   const status = Number.isFinite(lastFailure?.status) ? `（status=${lastFailure.status}）` : '';
-  return { code, title: entry[0], detail: entry[1] + stage + status, hint: entry[2] };
+  const at = typeof lastFailure.at === 'string' ? lastFailure.at : null;
+  return { code, title: entry[0], detail: entry[1] + stage + status, hint: entry[2], at };
 }
 
-export function diagnoseQQ({ running = false, backendReady = false, processes = [], connection = null, frameworkDirs = [], compat = null, lastFailure = null } = {}) {
+export function diagnoseQQ({
+  running = false, backendReady = false, processes = [], connection = null,
+  frameworkDirs = [], compat = null, lastFailure = connection?.lastFailure ?? null, processScanError = '',
+  coreCode = '', backendType = 'native', directOneBot = false, statusError = '', statusOnline = null
+} = {}) {
   const rows = Array.isArray(processes) ? processes : [];
   const connected = connection?.connected === true || backendReady === true;
   const warnings = [];
@@ -109,15 +127,46 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
   if (compat?.flags?.smartAppControl) warnings.push('智能应用控制已开启');
   if (compat?.flags?.elevatedQQ?.length) warnings.push('QQ 以管理员身份运行');
   if (compat?.flags?.archMismatch?.length) warnings.push('QQ 不是 64 位');
+  if (compat?.flags?.foreignSession?.length) warnings.push('另有 QQ 进程在其它 Windows 会话');
   if (compat?.flags?.loaderBroken) warnings.push('注入器无法运行');
   if (compat?.flags?.hostArtifactMissing) warnings.push('宿主 DLL 缺失');
   // warnings 放进 base：已连接/未就绪这些早退结论也要带着环境提示，不能只在失败分支里出现。
-  const base = { processes: rows, connection, frameworkDirs, supportedVersions: SUPPORTED_QQ_VERSIONS, compat, lastFailure, warnings };
+  const failure = describeQQFailure(lastFailure);
+  const base = { running, backendReady, backendType, directOneBot, processes: rows, connection, frameworkDirs,
+    supportedVersions: SUPPORTED_QQ_VERSIONS, compat, lastFailure, failure, warnings, processScanError };
 
-  if (!running) {
+  if (!running && !directOneBot) {
+    const messages = {
+      ALCOR_CONFIG_INVALID: ['核心配置无法读取或校验失败', '核对当前实例所选的配置文件及其引用的 OneBot 配置。'],
+      ALCOR_AUTH_FAILED: ['核心健康检查被拒绝', '核对核心监听地址和令牌，确认与当前实例的配置一致。'],
+      ALCOR_IDENTITY_MISMATCH: ['端口响应与 Alcor 核心不匹配', '核对当前实例的监听端口和配置文件。'],
+      ALCOR_UNAVAILABLE: ['核心健康检查未完成', '查看核心启动日志，确认服务是否在监听，再重新检测。']
+    };
+    if (Object.hasOwn(messages, coreCode)) {
+      const [title, hint] = messages[coreCode];
+      return { ...base, code: coreCode, title, detail: '', hint };
+    }
     return { ...base, code: 'CORE_OFFLINE', title: 'Alcor 核心没有运行',
       detail: 'QQ 连接由随包的 Alcor 核心负责，核心没起来就谈不上连接 QQ。',
       hint: '先在设置 → 连接与桌面里启动 Alcor 核心，或用程序自带的启动入口重开一次。' };
+  }
+  if (backendType === 'onebot') {
+    if (coreCode === 'ONEBOT_CONFIG_INVALID') return { ...base, code: coreCode, title: 'OneBot 连接配置无效',
+      detail: '', hint: '在 Agent 的 OneBot 连接页核对本机 HTTP 和 WebSocket 地址，保存后重新检测。' };
+    if (coreCode === 'ONEBOT_PROBE_UNAVAILABLE') return { ...base, code: coreCode, title: 'OneBot 排查组件不可用',
+      detail: '', hint: '核对 Agent 安装文件，并在 OneBot 连接页查看状态。' };
+    if (backendReady) return { ...base, code: 'ALREADY_CONNECTED', title: 'OneBot 已连接，账号在线', detail: '账号状态查询成功，事件通道已连接。', hint: '' };
+    const wsAuth = connection?.ws === 'auth_failed' || statusError === 'UPSTREAM_WS_AUTH_FAILED';
+    if (wsAuth || /^UPSTREAM_HTTP_(401|403)$/.test(statusError) || (!statusError && statusOnline === null && connection?.http === 'auth_failed')) {
+      return { ...base, code: 'ONEBOT_AUTH_FAILED', title: 'OneBot ' + (wsAuth ? 'WebSocket' : 'HTTP') + ' 鉴权被拒',
+        detail: statusError, hint: '核对对应通道的地址和令牌，保存到当前使用的配置后重新连接。' };
+    }
+    if (connection?.ws !== 'open' || connection.receiveReady === false) return { ...base, code: 'ONEBOT_EVENTS_UNAVAILABLE',
+      title: 'OneBot 事件通道未连接', detail: statusError, hint: '确认本机 OneBot 服务已启动，核对 WebSocket 监听地址和路径。' };
+    if (statusOnline === false) return { ...base, code: 'ONEBOT_ACCOUNT_OFFLINE', title: 'OneBot 报告账号离线',
+      detail: '状态接口已响应，事件通道已连接。', hint: '在提供 OneBot 服务的应用中确认账号状态，然后重新检测。' };
+    return { ...base, code: 'ONEBOT_STATUS_UNAVAILABLE', title: 'OneBot 账号状态尚未确认',
+      detail: statusError, hint: '检查 OneBot 服务的状态查询接口、地址和服务日志。' };
   }
   if (connected) {
     const account = connection?.accountLastFour ? `尾号 ${connection.accountLastFour}` : '';
@@ -130,6 +179,10 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
       detail: '宿主已连上控制台，正在确认账号在线与消息通道（通常半分钟内完成）。',
       hint: '先在 QQ 里确认已登录、等 30 秒再点「重新扫描」；一直不恢复就重启 QQ 再连。' };
   }
+  if (processScanError) {
+    return { ...base, code: 'PROCESS_SCAN_FAILED', title: '读取 QQ 进程清单失败',
+      detail: processScanError, hint: '重新扫描。持续失败时导出排查报告。' };
+  }
   if (!rows.length) {
     return { ...base, code: 'NO_QQ_RUNNING', title: '没有检测到正在运行的 QQ',
       detail: '原生接入需要先登录官方 QQ 客户端，扫描时会连 QQ 一起看。',
@@ -140,10 +193,17 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
     const loaderText = compat?.loader?.reason ? '原因：' + compat.loader.reason : '加载器不可用';
     return { ...base, warnings, code: 'HOST_RUNTIME_BROKEN', title: '随包的注入组件不完整',
       detail: `${loaderText}；宿主 DLL：${compat?.hostDll?.ok ? '正常' : '缺失或被改写'}。这两样缺一个都注入不了。`,
-      hint: '用安装包覆盖安装一次（覆盖安装不会动 data 目录）；如果杀软隔离过文件，先从隔离区恢复再给 Alcor 目录加白名单。' };
+      hint: '核对发布包完整性和 Windows 事件。确认组件缺失时，用可信发布包修复安装。' };
   }
-  if (compat?.flags?.foreignSession?.length) {
-    return { ...base, warnings, code: 'SESSION_MISMATCH', title: 'QQ 不在同一个 Windows 会话里',
+  // 其它会话 / 32 位进程只是「这一份不能注入」，不该一票否决本会话里可用的候选：
+  // 只有连可用候选都没有时，才把它们当成整次连接的结论。
+  const foreignPids = new Set((compat?.flags?.foreignSession || []).map((pid) => Number(pid)));
+  // archMismatch 既接受 [{pid, arch}] 也接受裸 PID（排查工具与旧调用方两种写法都要认）。
+  const archPids = new Set((compat?.flags?.archMismatch || []).map((item) => Number(item && typeof item === 'object' ? item.pid : item)));
+  const eligibleRows = rows.filter((row) => !foreignPids.has(Number(row.pid)) && !archPids.has(Number(row.pid)));
+  const usableCandidate = pickCandidate(eligibleRows) || pickRelaxedCandidate(eligibleRows);
+  if (compat?.flags?.foreignSession?.length && !usableCandidate) {
+    return { ...base, warnings, code: 'SESSION_MISMATCH', title: '检测到 QQ 进程处于其他 Windows 会话',
       detail: `QQ 进程的会话号与 Alcor 不同（QQ：${compat.flags.foreignSession.join('、')}）。跨会话不能用这种方式注入。`,
       hint: '在同一个登录会话里打开 QQ 与 Alcor（不要一个走远程桌面、一个走本机控制台），或改用同一用户重新登录两边。' };
   }
@@ -152,27 +212,28 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
       detail: `QQ 进程（${compat.flags.elevatedQQ.join('、')}）以管理员身份运行，Alcor 以普通权限运行；低权限进程无法把 DLL 注入到高权限进程里。`,
       hint: '两种都行：把 QQ 以普通权限重开（推荐），或让 Alcor 也以管理员身份运行——关键是两边权限一致。' };
   }
-  if (compat?.flags?.archMismatch?.length) {
+  if (compat?.flags?.archMismatch?.length && !usableCandidate) {
     const detail = compat.flags.archMismatch.map((item) => `PID ${item.pid}：${item.arch}`).join('；');
-    return { ...base, warnings, code: 'ARCH_MISMATCH', title: 'QQ 不是 64 位版本',
+    return { ...base, warnings, code: 'ARCH_MISMATCH', title: '检测到架构不匹配的 QQ 进程',
       detail: `原生接入只支持 64 位 QQ，检测到：${detail}。`,
       hint: '换装官方 64 位 QQ（安装包默认就是 x64），再重新扫描。' };
   }
 
-  const unreadable = rows.filter((row) => row?.reason === 'PROCESS_INSPECTION_UNAVAILABLE');
-  const supported = rows.filter((row) => row?.supported);
-  const foreignRow = rows.find((row) => row.foreignModules?.length);
-  const hostLoaded = rows.find((row) => row.alcorHostLoaded);
-  const candidate = pickCandidate(rows);
+  // 候选只在「本会话、64 位」的行里挑：别的会话或 32 位 QQ 与本次注入无关。
+  const unreadable = eligibleRows.filter((row) => row?.reason === 'PROCESS_INSPECTION_UNAVAILABLE');
+  const supported = eligibleRows.filter((row) => row?.supported);
+  const foreignRow = eligibleRows.find((row) => row.foreignModules?.length);
+  const hostLoaded = eligibleRows.find((row) => row.alcorHostLoaded);
+  const candidate = pickCandidate(eligibleRows);
 
   if (foreignRow) {
     return { ...base, code: 'FOREIGN_MODULES', title: `QQ 里驻留着其它框架的模块：${foreignRow.foreignModules.join('、')}`,
       detail: '这些模块占用的正是原生接入要读的服务对象，两者同时存在时只能有一个拿到。',
       hint: '退出那个框架、完全关掉 QQ 再登录，然后回来重连；不用卸载它，只要它别同时挂在 QQ 上。' };
   }
-  if (!supported.length) {
+  if (!supported.length && unreadable.length < eligibleRows.length) {
     const versions = [...new Set(rows.map((row) => row.version || '未知版本'))].join('、');
-    const relaxed = pickRelaxedCandidate(rows);
+    const relaxed = pickRelaxedCandidate(eligibleRows);
     if (relaxed) {
       const family = relaxed.verification === 'family';
       return { ...base, code: 'QQ_BUILD_UNLISTED',
@@ -198,10 +259,13 @@ export function diagnoseQQ({ running = false, backendReady = false, processes = 
       detail: '进程在，但读不到 wrapper.node；多半是权限不足或 QQ 还在启动中。',
       hint: '等 QQ 启动完成、以同一用户身份重试；仍不行就用管理员权限运行一次排查程序。' };
   }
-  const failure = describeQQFailure(lastFailure);
-  if (failure) {
-    return { ...base, warnings, code: 'INJECTION_BLOCKED', title: failure.title,
-      detail: failure.detail, hint: failure.hint, candidate, failure };
+  // 失败记录里的 PID 已经不在了，说明那是上一次 QQ 进程的事，不能继续压住「已就绪」。
+  const failurePid = Number(lastFailure?.pid);
+  const failureStale = Number.isSafeInteger(failurePid) && failurePid > 0 && !rows.some((row) => Number(row.pid) === failurePid);
+  if (failure && failureStale) warnings.push('上次失败发生在已退出的 QQ 进程（PID ' + failurePid + '），本次判定忽略');
+  if (failure && !failureStale) {
+    return { ...base, code: 'INJECTION_BLOCKED', title: failure.title,
+      detail: failure.detail, hint: failure.hint, candidate };
   }
   return { ...base, warnings, code: 'READY_TO_CONNECT', title: `找到可连接的 QQ（${candidate.version || '未知版本'}，PID ${candidate.pid}）`,
     detail: candidate.verification === 'live' ? '这个构建已通过真实收发验证。' : '这个构建已完成静态适配，连接后确认账号与收发。',
@@ -226,9 +290,13 @@ export function formatReport(result) {
   if (result.detail) line(`原因：${result.detail}`);
   if (result.hint) line(`处理：${result.hint}`);
   line('');
-  line(`核心状态：${result.running ? '运行中' : '未运行'}｜后端就绪：${result.backendReady ? '是' : '否'}`);
-  if (result.connection) line(`会话：connected=${result.connection.connected === true} pid=${result.connection.pid ?? '-'} 尾号=${result.connection.accountLastFour ?? '-'}`);
-  line(`支持版本：${result.supportedVersions.join(' / ')}`);
+  if (!result.directOneBot) line(`核心状态：${result.running ? '运行中' : result.code === 'CORE_OFFLINE' ? '未运行' : '未确认'}｜后端就绪：${result.backendReady ? '是' : '否'}`);
+  if (result.backendType === 'onebot') {
+    line(`OneBot 事件通道：${result.connection?.ws ?? '未知'}`);
+  } else if (result.running) {
+    if (result.connection) line(`会话：connected=${result.connection.connected === true} pid=${result.connection.pid ?? '-'} 尾号=${result.connection.accountLastFour ?? '-'}`);
+    line(`支持版本：${result.supportedVersions.join(' / ')}`);
+  }
   const compat = result.compat;
   if (compat) {
     const self = compat.self ? `会话 ${compat.self.sessionId}${compat.self.elevated ? ' · 管理员' : ' · 普通权限'}` : '未知';
@@ -237,16 +305,26 @@ export function formatReport(result) {
     line(`注入器：${loader.ran ? '可运行（stage=' + (loader.stage || '?') + '）' : '不可用（' + (loader.reason || '未知') + '）'}｜宿主 DLL：${compat.hostDll?.ok ? compat.hostDll.bytes + ' B' : '缺失'}`);
     if (compat.qq?.length) line(`QQ 进程环境：${compat.qq.map((item) => 'PID ' + item.pid + ' · ' + (item.arch || '未知架构') + (item.store ? ' · 商店版' : '')).join('；')}`);
     const sec = compat.security || {};
-    const secText = [sec.hvci === 1 ? '内存完整性开' : '内存完整性关', sec.smartAppControl === 1 ? '智能应用控制强制' : sec.smartAppControl === 2 ? '智能应用控制评估' : '智能应用控制关'];
-    if (sec.defender) secText.push(`Defender 实时${sec.defender.realtime ? '开' : '关'}`);
+    const secText = [
+      ['内存完整性关', '内存完整性开'][sec.hvci] ?? '内存完整性未知',
+      ['智能应用控制关', '智能应用控制强制', '智能应用控制评估'][sec.smartAppControl] ?? '智能应用控制未知'
+    ];
+    const realtime = sec.defender?.realtime;
+    if (typeof realtime === 'boolean') secText.push(`Defender 实时${realtime ? '开' : '关'}`);
     line(`安全策略：${secText.join(' / ')}`);
     if (coreCompatWarnings(compat).length) line(`注意：${coreCompatWarnings(compat).join('、')}`);
   }
-  if (result.failure) line(`上次失败：${result.failure.code}${result.failure.detail ? ' · ' + result.failure.detail : ''}`);
+  if (result.failure) {
+    const { code, detail, at } = result.failure;
+    line(`上次失败：${[code, detail, at].filter(Boolean).join(' · ')}`);
+  }
   line('');
-  if (!result.processes?.length) line('QQ 进程：无');
+  if (result.processScanError) line(`QQ 进程清单读取失败 · ${result.processScanError}`);
+  else if (result.running && result.backendType === 'native' && !result.processes?.length) line('QQ 进程：无');
   for (const row of result.processes || []) {
-    line(`QQ 进程 PID ${row.pid}：${row.version || '未知版本'} ${row.supported ? '（受支持' + (row.verification === 'static' ? '·静态适配' : '·已实网验证') + '）' : '（未适配）'}`);
+    const build = row.reason === 'PROCESS_INSPECTION_UNAVAILABLE' ? '（无法读取版本）'
+      : row.supported ? '（受支持' + (row.verification === 'static' ? '·静态适配' : '·已实网验证') + '）' : '（未适配）';
+    line(`QQ 进程 PID ${row.pid}：${row.version || '未知版本'} ${build}`);
     if (row.foreignModules?.length) line(`  外来模块：${row.foreignModules.join('、')}`);
     if (row.alcorHostLoaded) line('  Alcor 宿主：已驻留');
     if (row.reason) line(`  判定：${row.reason}`);
@@ -258,5 +336,4 @@ export function formatReport(result) {
   line('');
   line('--------------------------------------');
   line(`判定码：${result.code}`);
-  line(`（${result.title}）`);
 }

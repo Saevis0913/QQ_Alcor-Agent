@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process';
 import { getConfig, updateConfig, deepMerge as deepMergeConfig, DATA_DIR, ROOT } from './config.js';
 import { customSearch, SEARCH_PROVIDER_META, testSearchProvider } from './web-search.js';
 import { readUpdateSource, writeUpdateSource } from './update-source.js';
-import { diagnoseQQ, scanFrameworkDirs, qqInstallRoots } from './qq-diagnosis.js';
+import { diagnoseQQ, readQQProcessSnapshot, scanFrameworkDirs, qqInstallRoots } from './qq-diagnosis.js';
 import { collectInjectionCheck, runInjectionFix, formatInjectionReport } from './injection-doctor.js';
 import { probeQQCompat } from './qq-compat.js';
 import { restartQQ, waitForQQ, locateQQExecutable } from './qq-repair.js';
@@ -74,28 +74,43 @@ export function createRoutes(deps) {
 
   // QQ 连接排查：进程清单来自核心，判定逻辑只有一份（src/qq-diagnosis.js），界面、状态栏和自带排查程序共用。
   let qqDiagCache = null;
-  async function collectQQDiagnosis(depsRef, { fresh = false } = {}) {
-    const state = await depsRef.alcorInspect();
+  async function collectQQDiagnosis(depsRef, { fresh = false, state = null } = {}) {
+    state ??= await depsRef.alcorInspect();
+    const facts = { running: state.running, backendReady: state.backendReady, backendType: state.backendType,
+      directOneBot: state.directOneBot, coreCode: state.code, connection: state.connection,
+      statusOnline: state.statusOnline, statusError: state.statusError };
+    if (!state.running || state.backendType === 'onebot') {
+      qqDiagCache = null;
+      return diagnoseQQ(facts);
+    }
     const now = Date.now();
-    if (!fresh && qqDiagCache && now - qqDiagCache.at < 10_000
+    // 扫描失败（进程接口 503 / 超时）不进缓存：十秒内环境一变，缓存会把「还在失败」当成结论。
+    if (!fresh && qqDiagCache && now - qqDiagCache.at < 10_000 && !qqDiagCache.processScanError
       && qqDiagCache.running === state.running && qqDiagCache.backendReady === state.backendReady) return qqDiagCache.verdict;
-    let processes = [], connection = null;
-    if (state.running && typeof depsRef.alcorManage === 'function') {
+    let processes = [], connection = state.connection ?? null, processScanError = '';
+    if (typeof depsRef.alcorManage !== 'function') {
+      processScanError = '核心管理接口不可用。';
+    } else {
       try {
         const result = await depsRef.alcorManage('processes');
-        processes = Array.isArray(result.body?.processes) ? result.body.processes : [];
-        connection = result.body?.connection || null;
-      } catch { /* 核心活着但进程清单读不到：仍然给出「核心在、QQ 未确认」的结论 */ }
+        if (!result.ok) throw new Error(`HTTP ${result.status}`);
+        const snapshot = readQQProcessSnapshot(result.body);
+        processes = snapshot.processes;
+        if (snapshot.connection) connection = { ...connection, ...snapshot.connection,
+          receiveReady: state.receiveReady ?? snapshot.connection.receiveReady };
+      } catch (error) {
+        processScanError = error?.message || '核心未返回 QQ 进程清单。';
+      }
     }
     let compat = null;
     try {
       // 进程清单为空时也要探：注入器/宿主 DLL 缺不缺，与 QQ 有没有打开无关。
       compat = await probeQQCompat({ processRows: processes });
     } catch { compat = null; }
-    const verdict = diagnoseQQ({ running: state.running, backendReady: state.backendReady, processes, connection,
+    const verdict = diagnoseQQ({ ...facts, processes, connection,
       frameworkDirs: scanFrameworkDirs(qqInstallRoots(processes)),
-      compat, lastFailure: connection?.lastFailure || null });
-    qqDiagCache = { at: now, running: state.running, backendReady: state.backendReady, verdict };
+      compat, processScanError });
+    qqDiagCache = { at: now, running: state.running, backendReady: state.backendReady, processScanError, verdict };
     return verdict;
   }
 
@@ -136,6 +151,11 @@ export function createRoutes(deps) {
     const steps = [];
     const push = (id, text, status = 'ok') => { steps.push({ id, text, status }); };
     let state = await deps.alcorInspect();
+    if (state.backendType === 'onebot' || (state.code && state.code !== 'ALCOR_OFFLINE')) {
+      const verdict = await collectQQDiagnosis(deps, { state, fresh: true });
+      push('probe', [verdict.title, verdict.hint].filter(Boolean).join('。'), verdict.backendReady ? 'ok' : 'manual');
+      return { code: verdict.code, steps };
+    }
     if (!state.running) {
       push('core', 'Alcor 核心没在运行，先启动它', 'running');
       try { await launchAlcor(); } catch { /* 下面统一判定 */ }
@@ -145,7 +165,7 @@ export function createRoutes(deps) {
     push('core', state.running ? '核心已运行' : '核心没有起来', state.running ? 'ok' : 'error');
     if (!state.running) return { code: 'CORE_OFFLINE', steps };
 
-    let verdict = await collectQQDiagnosis(deps, { fresh: true });
+    let verdict = await collectQQDiagnosis(deps, { state, fresh: true });
     push('probe', '当前判定：' + verdict.code + (verdict.title ? '（' + verdict.title + '）' : ''), 'ok');
     if (verdict.code === 'ALREADY_CONNECTED') return { code: 'ALREADY_CONNECTED', steps, connection: verdict.connection || null };
 
@@ -253,14 +273,15 @@ export function createRoutes(deps) {
         const slRunning = alcorState.running;
         let onebotDiagnosis = alcorState.error || '';
         let qqVerdict = null;
-        if (slRunning && !alcorState.backendReady) {
+        if ((slRunning || alcorState.directOneBot) && !alcorState.backendReady) {
           // 「连不上」有很多种，状态栏只说最贴近的那一种，完整排查在设置页的 QQ 接入诊断里。
-          try { qqVerdict = await collectQQDiagnosis(deps); onebotDiagnosis = qqVerdict.title + (qqVerdict.hint ? '：' + qqVerdict.hint : ''); }
+          try { qqVerdict = await collectQQDiagnosis(deps, { state: alcorState }); onebotDiagnosis = qqVerdict.title + (qqVerdict.hint ? '：' + qqVerdict.hint : ''); }
           catch { onebotDiagnosis = 'Alcor 已启动，账号状态尚未确认；请在 Alcor 控制台查看 QQ 接入'; }
         }
         else if (slRunning && !onebot.connected) onebotDiagnosis = onebot.lastConnectError || '正在连接 Alcor…';
         return json(res, 200, {
-          ...(deps.standard && { onebotEdition: { httpUrl: onebot.httpUrl, wsUrl: onebot.wsUrl, hasToken: Boolean(onebot.accessToken || onebot.httpToken) } }),
+          ...(deps.standard && { onebotEdition: { httpUrl: onebot.httpUrl, wsUrl: onebot.wsUrl,
+            hasToken: Boolean(onebot.accessToken), hasHttpToken: Boolean(cfgNow.alcor?.httpAccessToken) } }),
           onebot: {
             connected: onebot.connected,
             everConnected: onebot.everConnected,
@@ -457,7 +478,7 @@ export function createRoutes(deps) {
       method: 'GET', pattern: '/api/qq/diagnosis',
       handler: async ({ res, json }) => {
         const state = await deps.alcorInspect();
-        const verdict = await collectQQDiagnosis(deps, { fresh: true });
+        const verdict = await collectQQDiagnosis(deps, { fresh: true, state });
         return json(res, 200, { status: 'ok', data: { ...verdict,
           core: { running: state.running, backendReady: state.backendReady, code: state.code || null, error: state.error || '', version: state.version || '' } } });
       }
@@ -466,6 +487,7 @@ export function createRoutes(deps) {
       method: 'POST', pattern: '/api/qq/connect',
       handler: async ({ res, json, body }) => {
         const verdict = await collectQQDiagnosis(deps, { fresh: true });
+        if (verdict.backendType === 'onebot') return json(res, 409, { status: 'failed', wording: 'ONEBOT_EXTERNAL', error: '当前使用 OneBot 接入。' });
         const pid = Number(body?.pid) || verdict.candidate?.pid;
         // 宿主已经连上、只是消息通道还没确认时，这不是失败：如实回 200，让界面显示「已连接/正在确认」，
         // 否则用户会看到「连接失败」，而实际上下一次扫描就已经是已连接状态。
@@ -509,6 +531,7 @@ export function createRoutes(deps) {
     {
       method: 'POST', pattern: '/api/qq/restart',
       handler: async ({ res, json }) => {
+        if ((await deps.alcorInspect()).backendType === 'onebot') return json(res, 409, { status: 'failed', wording: 'ONEBOT_EXTERNAL', error: '当前使用 OneBot 接入。' });
         const listProcesses = async () => {
           try { const r = await deps.alcorManage('processes'); return Array.isArray(r.body?.processes) ? r.body.processes : []; }
           catch { return []; }

@@ -149,11 +149,41 @@ export async function probeLoader({ timeoutMs = 8000 } = {}) {
   return facts;
 }
 
-/** 宿主 DLL 是否完好（大小 + 是否被杀软挪走/清零）。 */
+// PE 头体检：宿主必须是真正的 x64 PE32+ DLL。只判「存在且够大」时，
+// 一个 100 KB 的垃圾文件也会被判成完好，注入阶段才炸在 artifact_identity 上。
+export function inspectPeFormat(buffer) {
+  if (!buffer || buffer.length < 0x40) return { ok: false, format: 'truncated' };
+  if (buffer[0] !== 0x4d || buffer[1] !== 0x5a) return { ok: false, format: 'not-mz' };
+  const peOffset = buffer.readUInt32LE(0x3c);
+  if (peOffset < 0x40 || peOffset + 0x60 > buffer.length) return { ok: false, format: 'pe-header-outside-head' };
+  if (buffer.readUInt32LE(peOffset) !== 0x00004550) return { ok: false, format: 'not-pe' };
+  const machine = buffer.readUInt16LE(peOffset + 4);
+  const characteristics = buffer.readUInt16LE(peOffset + 22);
+  const optionalAt = peOffset + 24;
+  const magic = buffer.readUInt16LE(optionalAt);
+  const sizeOfImage = buffer.readUInt32LE(optionalAt + 56);
+  const x64 = machine === 0x8664 && magic === 0x20b;
+  const dll = (characteristics & 0x2000) !== 0;
+  const sane = sizeOfImage >= 0x1000 && sizeOfImage <= 256 * 1024 * 1024;
+  return { ok: x64 && dll && sane, format: x64 ? 'pe32+x64' : 'pe-' + machine.toString(16), sizeOfImage };
+}
+
+/** 宿主 DLL 是否完好：文件够大、还是合法的 x64 PE32+ DLL（被杀软改写或替换时能直接看出来）。 */
 export function probeHostArtifact() {
-  const facts = { path: hostDllPath, exists: fs.existsSync(hostDllPath), bytes: 0 };
+  const facts = { path: hostDllPath, exists: fs.existsSync(hostDllPath), bytes: 0, format: null, reason: null };
   try { facts.bytes = fs.statSync(hostDllPath).size; } catch { /* 保持 0 */ }
-  facts.ok = facts.exists && facts.bytes > 64 * 1024;
+  const head = Buffer.alloc(0x200);
+  let read = 0;
+  try {
+    const fd = fs.openSync(hostDllPath, 'r');
+    try { read = fs.readSync(fd, head, 0, head.length, 0); } finally { fs.closeSync(fd); }
+  } catch { read = 0; }
+  const pe = inspectPeFormat(head.subarray(0, read));
+  facts.format = pe.format;
+  facts.ok = facts.exists && facts.bytes > 64 * 1024 && pe.ok;
+  if (!facts.exists) facts.reason = 'HOST_ARTIFACT_MISSING';
+  else if (!pe.ok) facts.reason = 'HOST_ARTIFACT_NOT_X64_PE';
+  else if (facts.bytes <= 64 * 1024) facts.reason = 'HOST_ARTIFACT_TOO_SMALL';
   return facts;
 }
 

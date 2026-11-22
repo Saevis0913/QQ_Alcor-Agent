@@ -234,6 +234,11 @@ function renderOverview(overview, info) {
       : '消息接收通道尚未就绪。', '消息未就绪', 'warning');
   } else if (backendConnected && !eventConnected) {
     connection('OneBot 事件通道未连接', 'HTTP 接口可访问。请检查后端的 WebSocket 连接。', '事件未就绪', 'warning');
+  } else if (eventConnected && backend.apiReady === false) {
+    const hint = backend.apiTransport === 'websocket'
+      ? '请检查后端的 WebSocket 地址是否同时提供 API 调用和事件推送。'
+      : '请检查后端的 HTTP 地址和访问令牌。';
+    connection('OneBot API 未就绪', hint, 'API 未就绪', 'warning');
   } else if (backendConnected) {
     connection('OneBot 后端已连接', accountState === '离线'
       ? 'QQ 账号离线，请检查后端的登录状态。'

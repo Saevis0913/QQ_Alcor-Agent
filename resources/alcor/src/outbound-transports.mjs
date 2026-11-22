@@ -91,9 +91,11 @@ export function createOutboundTransports(config, { getAccount, execute, log = ()
             ...(row.options.secret ? { 'x-signature': 'sha1=' + createHmac('sha1', row.options.secret).update(item.json).digest('hex') } : {}) },
           body: item.json });
         if (!response.ok) { await response.body?.cancel(); throw Object.assign(new Error(), { code: `CALLBACK_HTTP_${response.status}` }); }
-        const body = await responseBody(response);
+        let replyBody;
+        if (row.options.quickReply) replyBody = await responseBody(response);
+        else await response.body?.cancel().catch(() => {});
         row.delivered++; row.lastError = null;
-        await quickReply(row, body, item.event, item.selfId);
+        if (replyBody !== undefined) await quickReply(row, replyBody, item.event, item.selfId);
       } catch (error) {
         if (!stopped) { row.failed++; report(row, controller.signal.aborted ? 'CALLBACK_ABORTED_OR_TIMEOUT' : errorCode(error)); }
       } finally { clearTimeout(timeout); row.controller = null; row.state = stopped ? 'stopped' : 'idle'; }

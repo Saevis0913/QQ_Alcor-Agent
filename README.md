@@ -68,17 +68,23 @@ npm install
 npm start
 ```
 
+### 核心连接本机 OneBot 后端
+
+使用已授权的本机 OneBot 服务时，将核心配置的 `backend.type` 设为 `onebot`。同时配置 `httpUrl` 和 `wsUrl` 时，HTTP 负责调用，WebSocket 负责接收事件。后端提供通用 WebSocket 时，可以只填 `wsUrl`，有访问令牌时填 `wsToken`。
+
+核心需要 Node 24 或更新版本。在 `resources/alcor` 运行 `npm run test:compat`，会用本机模拟服务测试 IPv4、IPv6、配置编码、握手延迟和鉴权组合。
+
 ## 控制台显示「无法连接 / 被占用」怎么办
 
 程序不自带任何第三方框架（NapCat、SnowLuma、LiteLoader 都不在包里，见 `resources/alcor/native-core/discovery.mjs` 只做识别）。遇到连不上：
 
-**先点 设置 → 连接与桌面 → QQ 接入 →「一键检测并连接」**。它会自己启动核心、拉起 QQ、清理残留宿主、重试注入，并把每一步写在卡片上；未登记的 QQ 版本可以点「仍然尝试注入」试一次（失败会自动重启 QQ 恢复原状）。
+打开 **设置 → 连接与桌面 → QQ 接入** 查看当前实例的判定。使用外部 OneBot 服务时，点「重新检测」查看事件连接和账号状态。标准版的 OneBot 连接页可分别填写通用令牌和 HTTP 专用令牌。
 
 要看完整报告，双击安装目录里的：
 
 `控制台无法连接，显示被占用点这个，对照最后一行判定码.cmd`
 
-它只读地扫一遍本机（系统版本、QQ 进程、注入器、宿主 DLL、运行库、权限、会话、安全策略、上次失败阶段），**最后一行是判定码**，按下面的表处理。完整报告同时落盘在 `data/qq-doctor-<时间戳>.log`。
+排查程序读取当前实例的配置。OneBot 模式检查状态接口和事件连接。原生模式在核心在线时读取进程信息和上次失败阶段。**报告最后一行是判定码**，完整报告保存在当前实例数据目录的 `qq-doctor-<时间戳>.log`。
 
 | 判定码 | 含义 | 处理 |
 | --- | --- | --- |
@@ -86,6 +92,11 @@ npm start
 | `READY_TO_CONNECT` | 一切就绪 | 点「连接 QQ」或「一键检测并连接」 |
 | `RECEIVE_NOT_READY` | 宿主连上了，账号或消息通道还没确认 | 确认 QQ 已登录后点「重新扫描」；一直不恢复就重启 QQ 再连 |
 | `CORE_OFFLINE` | Alcor 核心没在运行 | 侧栏「Alcor」页启动核心，再回来连接 |
+| `ALCOR_CONFIG_INVALID` | 当前实例的核心配置无法读取或未通过校验 | 核对配置路径，以及其中引用的 OneBot 配置文件 |
+| `ALCOR_AUTH_FAILED` / `ALCOR_IDENTITY_MISMATCH` | 健康检查被拒绝，或端口返回其他服务的响应 | 核对核心监听端口和访问令牌 |
+| `ONEBOT_AUTH_FAILED` | OneBot 鉴权被拒 | 按报告标出的 HTTP 或 WebSocket 通道核对令牌 |
+| `ONEBOT_EVENTS_UNAVAILABLE` | 事件通道未连接 | 核对 WebSocket 地址、端口和路径 |
+| `ONEBOT_ACCOUNT_OFFLINE` / `ONEBOT_STATUS_UNAVAILABLE` | 服务报告账号离线，或状态查询未取得有效结果 | 前者检查账号登录状态，后者查看接口地址和服务日志 |
 | `NO_QQ_RUNNING` | 没检测到 QQ 进程 | 先登录 QQ；一键连接会自己帮你拉起 |
 | `UNSUPPORTED_BUILD` | QQ 版本未适配，且没有可直接尝试的进程 | 换回已适配版本（`9.9.36-53644` / `9.9.37-54395`），或以普通权限启动 QQ 后再扫描 |
 | `QQ_BUILD_UNLISTED` | QQ 构建未登记，但可以试 | 点「仍然尝试注入」：兼容模式试一次，失败会自动重启 QQ 恢复原状 |
@@ -96,10 +107,10 @@ npm start
 | `SESSION_MISMATCH` | QQ 与 Alcor 不在同一个 Windows 会话 | 在同一登录会话里打开两者（别一个远程桌面、一个本机控制台） |
 | `ARCH_MISMATCH` | QQ 不是 64 位 | 换装官方 64 位 QQ（安装包默认 x64） |
 | `HOST_RUNTIME_BROKEN` | 注入器或宿主 DLL 缺失/损坏 | 重新安装；或装 VC++ 运行库后重启 Alcor |
-| `HOST_TARGET_DENIED` | 加载器拿不到 QQ 进程操作权 | 多为权限/受保护进程；按 `ELEVATION_MISMATCH` 处理后再试 |
-| `HOST_LOAD_BLOCKED` | alcor-host.dll 在 QQ 里加载失败 | 安全软件加白名单（Alcor 目录与 QQ 目录）；关闭「内核隔离 · 内存完整性」后重启；确认是 64 位 QQ |
+| `HOST_TARGET_DENIED` | 系统拒绝了进程访问 | 按报告中的失败时间核对 Windows 事件 |
+| `HOST_LOAD_BLOCKED` | 核心报告宿主加载失败 | 核对安装完整性及同一时间的 Windows 事件，已有授权 OneBot 服务时可改用该接入方式 |
 | `HOST_ENTRY_FAILED` | DLL 进去了但没起来 | 重启 QQ 再试；仍失败请把 `data/qq-doctor-*.log` 发回来 |
-| `INJECTION_BLOCKED` | 环境主动拦截注入 | 检查 HVCI、智能应用控制、EDR；按提示逐项放开后重启 |
+| `INJECTION_BLOCKED` | 核心记录了原生连接失败 | 查看报告中的「上次失败」、阶段、状态值和时间 |
 | `PROCESS_UNREADABLE` | 读不到 QQ 进程信息 | 用管理员身份运行一次排查程序；或检查安全软件是否拦了进程查询 |
 
 同一份判定也显示在 **设置 → 连接与桌面 → QQ 接入** 卡片上，底栏状态会写成「QQ 版本未适配」「QQ 可以连接」这类短语。

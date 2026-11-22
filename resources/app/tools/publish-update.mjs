@@ -42,8 +42,6 @@ if (!/^\d+\.\d+\.\d+(?:-as\.\d+)?$/.test(version)) {
 const isAsPatch = /-as\.\d+$/.test(version);
 const majorMinor = version.split('.').slice(0, 2).join('.');
 const tag = process.env.TAG || `v${majorMinor}-latest`;
-const isPrerelease = process.env.PRERELEASE !== '0';
-const releaseName = process.env.RELEASE_NAME || (isPrerelease ? '更新下载通道（自动更新用，请勿手动下载）' : `Alcor Agent 正式版 v${version}`);
 const assetName = path.basename(file);
 
 const bytes = fs.statSync(file).size;
@@ -111,10 +109,10 @@ try {
 } catch (error) {
   if (error.status !== 404) throw error;
 }
-if (release && (release.name !== releaseName || release.prerelease !== isPrerelease)) {
+if (release && (release.name !== '更新下载通道（自动更新用，请勿手动下载）' || release.prerelease !== true)) {
   release = await api('PATCH', `${API}/repos/${owner}/${name}/releases/${release.id}`, {
-    name: releaseName,
-    prerelease: isPrerelease
+    name: '更新下载通道（自动更新用，请勿手动下载）',
+    prerelease: true
   });
   console.log('已校正滚动 release：标为预发行，不占仓库首页 Releases 位');
 }
@@ -123,9 +121,9 @@ if (!release) {
   release = await api('POST', `${API}/repos/${owner}/${name}/releases`, {
     tag_name: tag,
     target_commitish: main.sha,
-    name: releaseName,
-    prerelease: isPrerelease,
-    body: isPrerelease ? `这个 release 只放当前大版本的最新安装包，资产会随小版本更新替换；历史版本请在 git tag 里查。` : notes,
+    name: '更新下载通道（自动更新用，请勿手动下载）',
+    prerelease: true,
+    body: `这个 release 只放当前大版本的最新安装包，资产会随小版本更新替换；历史版本请在 git tag 里查。`,
     draft: false
   });
   console.log('已创建滚动 release：' + tag);
