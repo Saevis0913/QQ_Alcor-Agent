@@ -22,3 +22,6 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# 本机工作记录：交接、关键要点、试错、修改记录等只保存在本机，永不入库
+docs/

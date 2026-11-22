@@ -1,6 +1,7 @@
 /** Exact shipped QQ module identities. Numeric addresses are RVAs, never process pointers.
  * 9.9.37: static ABI comparison completed; live account roundtrip remains to be verified.
- * See docs/alcor-qq-version-compat.md. Never authorize by display version alone. */
+ * See the local notes at D:/Alcor-本机记录/docs/alcor-qq-version-compat.md.
+ * Never authorize by display version alone. */
 const profiles = [
   {
     version:'9.9.36-53644', module:'wrapper.node', architecture:'x64', verification:'live',

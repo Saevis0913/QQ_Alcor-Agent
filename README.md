@@ -50,7 +50,7 @@ resources/
     native-core/          原生宿主桥接（账号发现、连接、收发）
     panel/                框架自带面板
     vendor/               ws 等内联依赖
-docs/                     版本要点、修改记录、试错记录
+update/                   小版本清单与更新说明
 ```
 
 ## 快速开始
