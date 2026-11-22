@@ -36,19 +36,23 @@ test('readIdentityHint refuses partial profiles', async () => {
 });
 
 test('readIdentityHint reads the live QQ account when a supported build is running', async (t) => {
-  const profile = QQ_BUILD_PROFILES[0];
+  // 拿正在跑的那个构建自己的 rvas：换成别的版本读出来就是垃圾，会假红。
+  let profile = QQ_BUILD_PROFILES[0];
   let pid = 0;
   try {
     const { discoverQQ } = await import('../native-core/discovery.mjs');
     const rows = await discoverQQ();
     const row = (rows || []).find((item) => item.pid && item.supported);
     pid = row?.pid || 0;
+    const sha = String(row?.sha256 || '').toLowerCase();
+    profile = QQ_BUILD_PROFILES.find((item) => String(item.sha256 || '').toLowerCase() === sha) || profile;
   } catch { pid = 0; }
   if (!pid) return t.skip('no running QQ');
   const hint = await readIdentityHint(pid, profile.rvas);
   assert.equal(hint.reason, null);
   assert.match(String(hint.account), /^\d{5,10}$/);
-  assert.equal(hint.serviceBound, true);
+  // 9.9.37 的 service_global 恒为 0（会话服务在线程局部存储里），这里只要求结论有值。
+  assert.equal(typeof hint.serviceBound, 'boolean');
 });
 
 
@@ -71,14 +75,27 @@ test('identityDecision falls back to the memory uin when the host returns 6', as
   assert.equal(decision.identity.status, 0);
 });
 
-test('identityDecision reports IDENTITY_UNREADABLE when both paths fail', async () => {
+// §5.4：三种失败要能分辨——服务为空 / 账号为 0 / 调用失败。
+test('identityDecision reports IDENTITY_SERVICE_NULL when the service is thread-local and memory fails too', async () => {
   const { identityDecision } = await import('../native-core/controller.mjs');
   const decision = identityDecision({ status: 6, flags: 0, account: '0' }, { account: null, reason: 'IDENTITY_MEMORY_UNREADABLE' });
-  assert.equal(decision.error, 'IDENTITY_UNREADABLE');
+  assert.equal(decision.error, 'IDENTITY_SERVICE_NULL');
 });
 
-test('identityDecision keeps QQ_LOGIN_NOT_CONFIRMED for other host states', async () => {
+test('identityDecision reports IDENTITY_ACCOUNT_ZERO when the call succeeds but the uin is 0', async () => {
+  const { identityDecision } = await import('../native-core/controller.mjs');
+  const decision = identityDecision({ status: 0, flags: 15, account: '0' }, null);
+  assert.equal(decision.error, 'IDENTITY_ACCOUNT_ZERO');
+});
+
+test('identityDecision reports IDENTITY_CALL_FAILED for an unexpected status', async () => {
   const { identityDecision } = await import('../native-core/controller.mjs');
   const decision = identityDecision({ status: 3, flags: 0, account: '0' }, null);
+  assert.equal(decision.error, 'IDENTITY_CALL_FAILED');
+});
+
+test('identityDecision keeps QQ_LOGIN_NOT_CONFIRMED when flags are incomplete', async () => {
+  const { identityDecision } = await import('../native-core/controller.mjs');
+  const decision = identityDecision({ status: 0, flags: 8, account: '123456' }, null);
   assert.equal(decision.error, 'QQ_LOGIN_NOT_CONFIRMED');
 });

@@ -76,12 +76,19 @@ async function readIdentityHint(pid,rvas){
 }
 /* 纯决策：宿主 identity 可信就用它；不可信但有内存读到的 uin 就合成；两者都没有才报错。
    拆成纯函数是为了能单测，不依赖真的 QQ 进程。 */
+// §5.4：identity 失败要能分辨是哪一段坏了，而不是一律说「读不到」。
+export function identityFailureCode(id){
+  if(!id)return 'IDENTITY_CALL_FAILED';
+  if(id.status===6)return 'IDENTITY_SERVICE_NULL';
+  if(id.status===0&&(!id.account||id.account==='0'))return 'IDENTITY_ACCOUNT_ZERO';
+  if(id.status!==0)return 'IDENTITY_CALL_FAILED';
+  return 'QQ_LOGIN_NOT_CONFIRMED';
+}
 export function identityDecision(id,hint){
   const bad=!id||id.status!==0||id.flags!==15||!id.account||id.account==='0';
   if(!bad)return {identity:id,source:'host',error:null};
   if(hint&&hint.account)return {identity:{...(id||{}),status:0,account:hint.account,flags:15},source:'memory',error:null,hint};
-  const error=(id&&id.status===6)?'IDENTITY_UNREADABLE':'QQ_LOGIN_NOT_CONFIRMED';
-  return {identity:id||null,source:'host',error,hint:hint||null};
+  return {identity:id||null,source:'host',error:identityFailureCode(id),hint:hint||null};
 }
 async function readIdentity(query,owner,attempts=3){
   let last=null;
@@ -104,7 +111,7 @@ export class NativeController {
     this.inventory=inventory;this.loader=loader;this.query=query;this.heartbeatMs=heartbeatMs;
     this.owner=null;this.ownerGeneration=0;this.pending=null;this.disconnecting=null;this.tail=Promise.resolve();this.lastError=null;this.lastFailure=null;this.closed=false;
   }
-  snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,lastError:this.lastError,lastFailure:this.lastFailure};}
+  snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,identitySource:this.owner?.identitySource??null,serviceBound:this.owner?.serviceBound??null,lastError:this.lastError,lastFailure:this.lastFailure};}
   enqueue(fn){const next=this.tail.then(fn);this.tail=next.catch(()=>{});return next;}
   resumeSelection(){
     const owner=this.owner;

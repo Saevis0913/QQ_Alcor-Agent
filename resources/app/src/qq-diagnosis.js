@@ -89,8 +89,15 @@ const FAILURE_TEXT = {
     '用安装包覆盖安装一次（覆盖安装不会动 data 目录），再重试连接。'],
   PROFILE_SCAN_FAILED: ['现场推导 profile 失败', '离线扫描器没能从这个版本的 wrapper.node 复原出全部 RVA（构建差异超出已知锚点），没有写入任何补丁。',
     '装回受支持的 QQ 版本（9.9.36-53644 / 9.9.37-54395），或把判定码与 data/logs 当日日志一起反馈以适配该版本。'],
+  IDENTITY_SERVICE_NULL: ['账号读不到（会话服务不在宿主线程上）', '宿主已进 QQ 且 heartbeat 正常，但 identity 返回 status=6：这版 QQ 把会话服务放在线程局部存储里，注入线程取不到。',
+    'Alcor 会自动改用只读内存取账号（9.9.37 实测可连、可收可发）；仍失败时重启 QQ 再连。这不是安全软件拦截，别去关内存完整性或杀软。'],
+  IDENTITY_ACCOUNT_ZERO: ['账号为空：登录还没有完成', '宿主调到了取账号接口，但拿回来的账号是 0。常见于只停在登录框、登录被中断、或换了账号还没重启 QQ。',
+    '在这个 QQ 窗口里把登录走完（不是只打开登录框），再点「连接 QQ」。'],
+  IDENTITY_CALL_FAILED: ['取账号的调用没有返回结果', '宿主调用 QQ 的取账号接口时既没拿到成功，也没拿到「服务为空」这种明确结果，属于调用本身失败。',
+    '完全退出 QQ 后重新登录再连；仍失败导出排查报告，附判定码与时间。'],
+  // 旧版核心只报这一个码，保留别名免得历史失败记录变成「未知失败」。
   IDENTITY_UNREADABLE: ['账号读不到（会话服务不在宿主线程上）', '宿主已进 QQ 且 heartbeat 正常，但 identity 恒为 status=6：这版 QQ 把会话服务放在线程局部存储里，注入线程取不到。',
-    '换回已验证的 QQ 版本可直接连接；这一项不是安全软件拦截，别去关内存完整性或杀软。'],
+    'Alcor 会自动改用只读内存取账号（9.9.37 实测可连、可收可发）；仍失败时重启 QQ 再连。这一项不是安全软件拦截。'],
   PROFILE_SCAN_LOW_CONFIDENCE: ['这版 QQ 的结构和已知锚点对不上', '扫描器发现自己复原的偏移互相矛盾（落点不在代码段、或多字段指向同一处），判定为低置信度，没有写入任何补丁、也没有碰 QQ。',
     '先按受支持版本使用；把判定码与 QQ 版本号反馈后加进适配矩阵，不靠猜偏移硬打补丁。'],
   PROFILE_SCAN_MISMATCH: ['QQ 文件在扫描前后不一致', '扫描到的 wrapper.node 与进程清单里的哈希对不上，多半是 QQ 正在自动更新。',
@@ -175,12 +182,15 @@ export function diagnoseQQ({
   if (connected) {
     const account = connection?.accountLastFour ? `尾号 ${connection.accountLastFour}` : '';
     // /manage/processes 里的连接快照对 receiveReady 恒为 false，是否真正就绪以核心 /get_status 为准。
+    // 账号来自只读内存时要把这件事说出来：它不是宿主那条线程局部路径给的，排障时两回事。
+    const memoryNote = connection?.identitySource === 'memory'
+      ? '这台机器走的是只读内存取账号（宿主 identity 返回 6），连接与收发已实测可用。' : '';
     if (backendReady) {
       return { ...base, code: 'ALREADY_CONNECTED', title: `已连接 QQ ${account}`.trim(),
-        detail: '账号在线，消息收发通道正常。', hint: '' };
+        detail: ['账号在线，消息收发通道正常。', memoryNote].filter(Boolean).join(''), hint: '' };
     }
     return { ...base, code: 'RECEIVE_NOT_READY', title: `QQ 宿主已连上 ${account}`.trim(),
-      detail: '宿主已连上控制台，正在确认账号在线与消息通道（通常半分钟内完成）。',
+      detail: ['宿主已连上控制台，正在确认账号在线与消息通道（通常半分钟内完成）。', memoryNote].filter(Boolean).join(''),
       hint: '先在 QQ 里确认已登录、等 30 秒再点「重新扫描」；一直不恢复就重启 QQ 再连。' };
   }
   if (processScanError) {
@@ -273,11 +283,14 @@ export function diagnoseQQ({
     // 只有加载器真的走到注入阶段，才叫「注入被拦」。
     const injected = /^(load_library|target_identity|artifact_identity|module_already_loaded|entry|startup)$/.test(stage)
       || /^HOST_(LOAD|TARGET|ARTIFACT|ALREADY|START|THREAD|REFERENCE|ENTRY|RUNTIME)/.test(failCode);
-    if (failCode === 'IDENTITY_UNREADABLE' || stage === 'identity') {
-      return { ...base, code: 'IDENTITY_UNREADABLE',
-        title: '账号读不到：这版 QQ 的会话服务不在宿主线程上',
-        detail: '宿主已经进了 QQ（heartbeat 正常），但取账号时 QQ 返回 status=6：9.9.37 起会话服务是线程局部对象，注入线程上没有它。',
-        hint: '这不是杀软或内存完整性拦的，别去关防护；换回 9.9.36-53644 可直接连接，或把判定码反馈给适配矩阵。', candidate };
+    // identity 的四种失败各有各的处置：服务为空（线程局部）、账号为 0（没登录完）、调用失败、旧版聚合码。
+    const identityCode = failCode === 'IDENTITY_ACCOUNT_ZERO' ? 'IDENTITY_ACCOUNT_ZERO'
+      : failCode === 'IDENTITY_CALL_FAILED' ? 'IDENTITY_CALL_FAILED'
+      : (failCode === 'IDENTITY_SERVICE_NULL' || failCode === 'IDENTITY_UNREADABLE' || stage === 'identity') ? 'IDENTITY_SERVICE_NULL'
+      : null;
+    if (identityCode && FAILURE_TEXT[identityCode]) {
+      const [title, detail, hint] = FAILURE_TEXT[identityCode];
+      return { ...base, code: identityCode, title, detail, hint, candidate };
     }
     // 只有「参数解析 / 探测」这类明确没进入注入流程的阶段才排除；未知阶段仍按原逻辑保守处理。
     const nonInjectionStage = /^(arguments|inspected|probe|inspect)$/.test(stage);

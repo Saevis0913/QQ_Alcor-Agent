@@ -412,3 +412,25 @@ test('a failed process scan is not cached for the next ten seconds', async () =>
   fail = false;
   assert.equal((await call()).code, 'READY_TO_CONNECT');
 });
+
+test('separates a thread-local identity service from a zero account and a failed call', () => {
+  const cases = [
+    [{ code: 'IDENTITY_SERVICE_NULL', stage: 'identity', status: 6 }, 'IDENTITY_SERVICE_NULL'],
+    [{ code: 'IDENTITY_ACCOUNT_ZERO', stage: 'identity', status: 0 }, 'IDENTITY_ACCOUNT_ZERO'],
+    [{ code: 'IDENTITY_CALL_FAILED', stage: 'identity', status: 3 }, 'IDENTITY_CALL_FAILED']
+  ];
+  for (const [lastFailure, expected] of cases) {
+    const result = diagnoseQQ({ running: true, processes: [knownQQ], lastFailure });
+    assert.equal(result.code, expected);
+    assert.equal(result.failure?.code, lastFailure.code);
+  }
+});
+
+test('says the account came from memory when the host identity was not usable', () => {
+  const result = diagnoseQQ({
+    running: true, processes: [knownQQ], backendReady: true,
+    connection: { connected: true, pid: 101, accountLastFour: '8295', identitySource: 'memory', receiveReady: true }
+  });
+  assert.equal(result.code, 'ALREADY_CONNECTED');
+  assert.match(result.detail, /只读内存/);
+});
