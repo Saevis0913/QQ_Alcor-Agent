@@ -16,7 +16,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { getConfig, updateConfig, deepMerge as deepMergeConfig, DATA_DIR, ROOT } from './config.js';
 import { runPreflight } from './preflight.js';
-import { onebotEditionEnabled, readEditionRequest, enableOneBotEdition, disableOneBotEdition, connectionHitsPort } from './onebot-edition.js';
+import { onebotEditionEnabled, readEditionRequest, enableOneBotEdition, disableOneBotEdition, connectionHitsPort,
+  probeOneBotConnection } from './onebot-edition.js';
 import { customSearch, SEARCH_PROVIDER_META, testSearchProvider } from './web-search.js';
 import { readUpdateSource, writeUpdateSource } from './update-source.js';
 import { diagnoseQQ, readQQProcessSnapshot, scanFrameworkDirs, qqInstallRoots } from './qq-diagnosis.js';
@@ -341,6 +342,19 @@ export function createRoutes(deps) {
         const saved = disableOneBotEdition({ installRoot: path.resolve(ROOT, '../..') });
         return json(res, 200, { ok: true, restartRequired: true, marker: saved.marker,
           note: '已切回内置核心。重启 Alcor Agent 后生效。' });
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/edition/test',
+      handler: async ({ req, res, json }) => {
+        if (req.headers['x-alcor-local-action'] !== 'configure-onebot') return json(res, 403, { error: '此操作只能由本机管理端发起。' });
+        const body = await readBody(req);
+        let connection = null;
+        try { connection = readEditionRequest(body); }
+        catch (error) { return json(res, 400, { error: String(error?.message || error) }); }
+        if (connectionHitsPort(connection, res.socket.localPort)) return json(res, 400, { error: '这两个地址指向 Alcor 自己，请填外部 OneBot 的地址。' });
+        const report = await probeOneBotConnection({ ...connection, accessToken: connection.accessToken, httpAccessToken: connection.httpAccessToken || connection.accessToken });
+        return json(res, 200, report);
       }
     },
     {

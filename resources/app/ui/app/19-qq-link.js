@@ -172,7 +172,7 @@
       <div class="field"><label>HTTP API 地址</label><input name="httpUrl" type="url" value="${esc(onebot.httpUrl || 'http://127.0.0.1:3000')}" required></div>
       <div class="field"><label>WebSocket 事件地址</label><input name="wsUrl" type="url" value="${esc(onebot.wsUrl || 'ws://127.0.0.1:3001')}" required></div>
       <div class="field"><label>访问令牌（服务未要求可留空）</label><input name="accessToken" type="password" autocomplete="off"></div>
-      <div class="qq-acts"><button class="btn btn-primary btn-small" type="submit">保存并启用 OneBot 接入</button></div>
+      <div class="qq-acts"><button class="btn btn-ghost btn-small" type="button" data-edition-test>测试连接</button><button class="btn btn-primary btn-small" type="submit">保存并启用 OneBot 接入</button></div>
       <p class="qq-status" role="status"></p>
     </form>`;
   }
@@ -294,14 +294,31 @@
             host.innerHTML = editionFormHtml(v);
             const form = host.querySelector('form[data-edition]');
             const note = form.querySelector('.qq-status');
-            form.addEventListener('submit', async (event) => {
-              event.preventDefault();
+            const payloadOf = () => {
               const data = new FormData(form);
-              const payload = {
+              return {
                 httpUrl: String(data.get('httpUrl') || '').trim(),
                 wsUrl: String(data.get('wsUrl') || '').trim(),
                 accessToken: String(data.get('accessToken') || '')
               };
+            };
+            form.querySelector('[data-edition-test]')?.addEventListener('click', async () => {
+              const payload = payloadOf();
+              note.textContent = '正在测试连接…';
+              try {
+                const report = await api('/api/edition/test', { method: 'POST',
+                  headers: { 'x-alcor-local-action': 'configure-onebot' }, body: JSON.stringify(payload) });
+                const sides = [report.http ? (report.http.ok ? `HTTP ${report.http.ms} ms` : 'HTTP 失败：' + (report.http.error || '未知')) : '',
+                  report.ws ? (report.ws.ok ? `WS ${report.ws.ms} ms` : 'WS 失败：' + (report.ws.error || '未知')) : '']
+                  .filter(Boolean).join(' / ');
+                note.textContent = (report.ok ? '✓ ' : '✗ ') + (report.message || '') + (sides ? '\n' + sides : '');
+              } catch (error) {
+                note.textContent = '测试失败：' + String(error?.message || error);
+              }
+            });
+            form.addEventListener('submit', async (event) => {
+              event.preventDefault();
+              const payload = payloadOf();
               note.textContent = '正在保存…';
               try {
                 const saved = await api('/api/edition/onebot', { method: 'POST',

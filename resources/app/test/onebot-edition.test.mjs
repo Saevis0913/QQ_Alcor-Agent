@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { onebotEditionEnabled, editionMarkerPath, enableOneBotEdition, disableOneBotEdition,
-  readEditionRequest, connectionHitsPort } from '../src/onebot-edition.js';
+  readEditionRequest, connectionHitsPort, probeOneBotConnection } from '../src/onebot-edition.js';
 
 const root = () => fs.mkdtempSync(path.join(os.tmpdir(), 'alcor-edition-'));
 
@@ -50,3 +50,41 @@ test('connectionHitsPort catches pointing the backend at the agent itself', () =
   assert.equal(connectionHitsPort(connection, 5321), false);
   assert.equal(connectionHitsPort({}, 5320), false);
 });
+
+test('probeOneBotConnection reports HTTP actions and the event channel separately', async () => {
+  const http = await import('node:http');
+  const { WebSocketServer } = await import('ws');
+  let retcode = 0;
+  const server = http.default.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(retcode === 0
+        ? { status: 'ok', retcode: 0, data: { user_id: 2790528295, nickname: 'probe' } }
+        : { status: 'failed', retcode, message: 'bad token' }));
+    });
+  });
+  const wss = new WebSocketServer({ server, path: '/event' });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const connection = { httpUrl: 'http://127.0.0.1:' + port, wsUrl: 'ws://127.0.0.1:' + port + '/event' };
+
+  const good = await probeOneBotConnection(connection, { timeoutMs: 4000 });
+  assert.equal(good.ok, true);
+  assert.equal(good.http.account, '2790528295');
+  assert.equal(good.ws.ok, true);
+  assert.match(good.message, /2790528295/);
+
+  retcode = 100;
+  const rejected = await probeOneBotConnection(connection, { timeoutMs: 4000 });
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.http.error, /retcode 100/);
+
+  const offline = await probeOneBotConnection({ httpUrl: 'http://127.0.0.1:1', wsUrl: 'ws://127.0.0.1:1/event' }, { timeoutMs: 1500 });
+  assert.equal(offline.ok, false);
+  assert.ok(offline.http.error.length > 0 && offline.ws.error.length > 0);
+  wss.close();
+  await new Promise((resolve) => server.close(resolve));
+});
+
