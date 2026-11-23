@@ -239,6 +239,7 @@ export function createApp({ log = console.log, qzoneProvider, onRestart, onQuitF
   const sessions = new SessionRegistry(cfg.store?.keepSessionFiles ?? 0);   // 0 = 不限
   inbox = new InboxStore({ onChange: chatKey => emit('inbox-update', { chatKey }) });
   const onebot = new OneBotClient({
+    receiptDirectory: path.join(DATA_DIR, 'pending-message-sends'),
     wsUrl: cfg.alcor?.wsUrl,
     httpUrl: cfg.alcor?.httpUrl,
     accessToken: cfg.alcor?.accessToken,

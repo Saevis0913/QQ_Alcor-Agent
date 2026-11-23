@@ -89,15 +89,19 @@ const FAILURE_TEXT = {
     '用安装包覆盖安装一次（覆盖安装不会动 data 目录），再重试连接。'],
   PROFILE_SCAN_FAILED: ['现场推导 profile 失败', '离线扫描器没能从这个版本的 wrapper.node 复原出全部 RVA（构建差异超出已知锚点），没有写入任何补丁。',
     '装回受支持的 QQ 版本（9.9.36-53644 / 9.9.37-54395），或把判定码与 data/logs 当日日志一起反馈以适配该版本。'],
-  IDENTITY_SERVICE_NULL: ['账号读不到（会话服务不在宿主线程上）', '宿主已进 QQ 且 heartbeat 正常，但 identity 返回 status=6：这版 QQ 把会话服务放在线程局部存储里，注入线程取不到。',
-    'Alcor 会自动改用只读内存取账号（9.9.37 实测可连、可收可发）；仍失败时重启 QQ 再连。这不是安全软件拦截，别去关内存完整性或杀软。'],
+  QQ_LOGIN_NOT_CONFIRMED: ['核心未确认 QQ 登录账号', '核心在本次连接中未能确认登录身份。',
+    '核对 QQ 窗口里的登录状态，导出同一会话的身份结果、心跳和时间。'],
+  IDENTITY_SERVICE_NULL: ['核心未能通过会话服务读取账号', '核心报告读取身份时会话服务不可用。',
+    '核对当前账号状态并保存本次诊断。账号识别和消息收发需要分别验收。'],
   IDENTITY_ACCOUNT_ZERO: ['账号为空：登录还没有完成', '宿主调到了取账号接口，但拿回来的账号是 0。常见于只停在登录框、登录被中断、或换了账号还没重启 QQ。',
     '在这个 QQ 窗口里把登录走完（不是只打开登录框），再点「连接 QQ」。'],
   IDENTITY_CALL_FAILED: ['取账号的调用没有返回结果', '宿主调用 QQ 的取账号接口时既没拿到成功，也没拿到「服务为空」这种明确结果，属于调用本身失败。',
     '完全退出 QQ 后重新登录再连；仍失败导出排查报告，附判定码与时间。'],
   // 旧版核心只报这一个码，保留别名免得历史失败记录变成「未知失败」。
-  IDENTITY_UNREADABLE: ['账号读不到（会话服务不在宿主线程上）', '宿主已进 QQ 且 heartbeat 正常，但 identity 恒为 status=6：这版 QQ 把会话服务放在线程局部存储里，注入线程取不到。',
-    'Alcor 会自动改用只读内存取账号（9.9.37 实测可连、可收可发）；仍失败时重启 QQ 再连。这一项不是安全软件拦截。'],
+  IDENTITY_UNREADABLE: ['核心未能读取账号', '旧版核心报告账号读取失败。',
+    '核对当前账号状态并保存本次诊断。'],
+  IDENTITY_SERVICE_UNBOUND: ['注入成功，但 QQ 没有交出消息服务', '宿主已在 QQ 内运行并读到了账号，但这次注入没拿到 QQ 的消息服务对象：账号能确认，消息收发不会生效。',
+    '先重启 QQ 再连一次；仍然如此就改用 OneBot 进程外接入。这不是杀软、也不是内存完整性拦的。'],
   PROFILE_SCAN_LOW_CONFIDENCE: ['这版 QQ 的结构和已知锚点对不上', '扫描器发现自己复原的偏移互相矛盾（落点不在代码段、或多字段指向同一处），判定为低置信度，没有写入任何补丁、也没有碰 QQ。',
     '先按受支持版本使用；把判定码与 QQ 版本号反馈后加进适配矩阵，不靠猜偏移硬打补丁。'],
   PROFILE_SCAN_MISMATCH: ['QQ 文件在扫描前后不一致', '扫描到的 wrapper.node 与进程清单里的哈希对不上，多半是 QQ 正在自动更新。',
@@ -180,18 +184,25 @@ export function diagnoseQQ({
       detail: statusError, hint: '检查 OneBot 服务的状态查询接口、地址和服务日志。' };
   }
   if (connected) {
+    // 连上了但消息服务没绑定：账号是真的，收发是假的——这种状态必须单独说出来，不能被「已连接」盖住。
+    if (connection?.serviceBound === false) {
+      return { ...base, code: 'IDENTITY_SERVICE_UNBOUND', title: 'QQ 已连上，但消息收发还不能用',
+        detail: '宿主已经在 QQ 进程里、账号也读到了，但这次注入没有拿到 QQ 的消息服务对象（serviceBound=false）：能确认登录，收发消息不会生效。',
+        hint: '先点「重启 QQ」或完全退出 QQ 重新登录后重连；重连后仍然一样，就改用 OneBot 进程外接入（设置 → 接入方式），不要反复注入。' };
+    }
     const account = connection?.accountLastFour ? `尾号 ${connection.accountLastFour}` : '';
     // /manage/processes 里的连接快照对 receiveReady 恒为 false，是否真正就绪以核心 /get_status 为准。
     // 账号来自只读内存时要把这件事说出来：它不是宿主那条线程局部路径给的，排障时两回事。
     const memoryNote = connection?.identitySource === 'memory'
-      ? '这台机器走的是只读内存取账号（宿主 identity 返回 6），连接与收发已实测可用。' : '';
+      ? '本次账号由只读内存识别。' : '';
     if (backendReady) {
       return { ...base, code: 'ALREADY_CONNECTED', title: `已连接 QQ ${account}`.trim(),
-        detail: ['账号在线，消息收发通道正常。', memoryNote].filter(Boolean).join(''), hint: '' };
+        detail: '核心报告账号在线，事件通道已连接。' + memoryNote, hint: '' };
     }
-    return { ...base, code: 'RECEIVE_NOT_READY', title: `QQ 宿主已连上 ${account}`.trim(),
-      detail: ['宿主已连上控制台，正在确认账号在线与消息通道（通常半分钟内完成）。', memoryNote].filter(Boolean).join(''),
-      hint: '先在 QQ 里确认已登录、等 30 秒再点「重新扫描」；一直不恢复就重启 QQ 再连。' };
+    const title = connection?.serviceBound === false ? 'QQ 消息服务绑定待确认' : 'QQ 宿主已连接，消息通道待确认';
+    return { ...base, code: 'RECEIVE_NOT_READY', title: [title, account].filter(Boolean).join(' · '),
+      detail: memoryNote + (connection?.serviceBound === false ? '建立连接时未确认消息服务绑定。' : '') + '当前会话的消息收发尚未确认。',
+      hint: '保存本次状态。在授权测试会话中分别核对入站事件和出站回执。发送结果未知时先核对接收端。' };
   }
   if (processScanError) {
     return { ...base, code: 'PROCESS_SCAN_FAILED', title: '读取 QQ 进程清单失败',
@@ -240,6 +251,16 @@ export function diagnoseQQ({
   const hostLoaded = eligibleRows.find((row) => row.alcorHostLoaded);
   const candidate = pickCandidate(eligibleRows);
 
+  // 只有能对应到当前进程的身份错误才优先于“宿主已驻留”。
+  const failurePid = Number(lastFailure?.pid);
+  const identityCodes = ['QQ_LOGIN_NOT_CONFIRMED', 'IDENTITY_SERVICE_NULL', 'IDENTITY_UNREADABLE', 'IDENTITY_ACCOUNT_ZERO', 'IDENTITY_CALL_FAILED', 'IDENTITY_SERVICE_UNBOUND'];
+  const currentIdentityFailure = identityCodes.includes(failure?.code) && (failurePid > 0
+    ? eligibleRows.some(row => Number(row.pid) === failurePid)
+    : !lastFailure?.pid && rows.length === 1 && eligibleRows.length === 1);
+  if (currentIdentityFailure) {
+    return { ...base, code: failure.code, title: failure.title, detail: failure.detail, hint: failure.hint };
+  }
+
   if (foreignRow) {
     return { ...base, code: 'FOREIGN_MODULES', title: `QQ 里驻留着其它框架的模块：${foreignRow.foreignModules.join('、')}`,
       detail: '这些模块占用的正是原生接入要读的服务对象，两者同时存在时只能有一个拿到。',
@@ -274,7 +295,6 @@ export function diagnoseQQ({
       hint: '等 QQ 启动完成、以同一用户身份重试；仍不行就用管理员权限运行一次排查程序。' };
   }
   // 失败记录里的 PID 已经不在了，说明那是上一次 QQ 进程的事，不能继续压住「已就绪」。
-  const failurePid = Number(lastFailure?.pid);
   const failureStale = Number.isSafeInteger(failurePid) && failurePid > 0 && !rows.some((row) => Number(row.pid) === failurePid);
   if (failure && failureStale) warnings.push('上次失败发生在已退出的 QQ 进程（PID ' + failurePid + '），本次判定忽略');
   if (failure && !failureStale) {
@@ -283,14 +303,10 @@ export function diagnoseQQ({
     // 只有加载器真的走到注入阶段，才叫「注入被拦」。
     const injected = /^(load_library|target_identity|artifact_identity|module_already_loaded|entry|startup)$/.test(stage)
       || /^HOST_(LOAD|TARGET|ARTIFACT|ALREADY|START|THREAD|REFERENCE|ENTRY|RUNTIME)/.test(failCode);
-    // identity 的四种失败各有各的处置：服务为空（线程局部）、账号为 0（没登录完）、调用失败、旧版聚合码。
-    const identityCode = failCode === 'IDENTITY_ACCOUNT_ZERO' ? 'IDENTITY_ACCOUNT_ZERO'
-      : failCode === 'IDENTITY_CALL_FAILED' ? 'IDENTITY_CALL_FAILED'
-      : (failCode === 'IDENTITY_SERVICE_NULL' || failCode === 'IDENTITY_UNREADABLE' || stage === 'identity') ? 'IDENTITY_SERVICE_NULL'
-      : null;
-    if (identityCode && FAILURE_TEXT[identityCode]) {
-      const [title, detail, hint] = FAILURE_TEXT[identityCode];
-      return { ...base, code: identityCode, title, detail, hint, candidate };
+    if (lastFailure.stage === 'identity' || identityCodes.includes(failCode)) {
+      const code = identityCodes.includes(failCode) ? failCode : 'QQ_LOGIN_NOT_CONFIRMED';
+      const [title, detail, hint] = FAILURE_TEXT[code];
+      return { ...base, code, title, detail, hint };
     }
     // 只有「参数解析 / 探测」这类明确没进入注入流程的阶段才排除；未知阶段仍按原逻辑保守处理。
     const nonInjectionStage = /^(arguments|inspected|probe|inspect)$/.test(stage);
@@ -330,6 +346,10 @@ export function formatReport(result) {
     line(`OneBot 事件通道：${result.connection?.ws ?? '未知'}`);
   } else if (result.running) {
     if (result.connection) line(`会话：connected=${result.connection.connected === true} pid=${result.connection.pid ?? '-'} 尾号=${result.connection.accountLastFour ?? '-'}`);
+    if (Number.isSafeInteger(result.connection?.events)) {
+      const stamp = result.connection.lastReceivedAt;
+      line(`后端入站事件：${result.connection.events}｜最近一次：${stamp ?? (stamp === null ? '尚无记录' : '未知')}`);
+    }
     line(`支持版本：${result.supportedVersions.join(' / ')}`);
   }
   const compat = result.compat;

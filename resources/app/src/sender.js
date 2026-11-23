@@ -143,7 +143,8 @@ export class SendQueue {
       return await send();
     } catch (error) {
       if (error?.delivery === 'unknown') {
-        this.uncertainSends.add(key);
+        // The other request owns this reservation and may still confirm.
+        if (error.code !== 'SEND_RECEIPT_PENDING') this.uncertainSends.add(key);
         error.nonretryable = true;
       }
       throw error;

@@ -13,9 +13,16 @@ try {
   const config = loadConfig(path.resolve(values.config));
   if(values.check&&config.backend.type==='native'){
     const host=config.listen.host.includes(':')?'[::1]':config.listen.host;
-    const response=await fetch(`http://${host}:${config.listen.port}/health`,{headers:{authorization:`Bearer ${config.listen.token}`},signal:AbortSignal.timeout(4000)});
+    const response=await fetch(`http://${host}:${config.listen.port}/health`,{redirect:'error',headers:{authorization:`Bearer ${config.listen.token}`},signal:AbortSignal.timeout(4000)});
     if(!response.ok)throw new Error('NATIVE_CORE_UNAVAILABLE');
-    const result=await response.json();console.log(JSON.stringify({name:result.name,version:result.version,listening:result.listening,ready:result.ready,backend:result.backend,messagesSent:0},null,2));if(!result.backend?.receiveReady)process.exitCode=2;
+    const result = await response.json();
+    if (result?.name !== 'Alcor' || result.listening !== true || result.backend?.type !== 'native') {
+      throw Object.assign(new Error(), { code: 'CORE_IDENTITY_MISMATCH' });
+    }
+    const ready = result.ready === true && result.backend.receiveReady === true && result.backend.qqOnline === true;
+    console.log(JSON.stringify({ name: result.name, version: result.version, listening: result.listening,
+      ready, backend: result.backend, messagesSent: 0 }, null, 2));
+    if (!ready) process.exitCode = 2;
   } else if (values.check) {
     const backend = config.backend.type==='native'?new NativeBackend(config):new Backend(config);
     backend.start(() => {});

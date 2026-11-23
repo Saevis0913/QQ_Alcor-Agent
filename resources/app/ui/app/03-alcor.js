@@ -80,7 +80,7 @@ async function loadAlcorPage({ quiet = false } = {}) {
     box.innerHTML = `
       <div class="alcor-page-card">
         <h2>Alcor 框架</h2>
-        <p class="hint">Alcor Agent 启动时自动连接所配置的 Alcor 核心。可连接 Alcor 独立原生核心；当前原生版已验证私聊文字收发。</p>
+        <p class="hint">Alcor Agent 启动时自动连接所配置的 Alcor 核心。下方分别显示核心、QQ 后端和 Agent 事件连接的状态。</p>
         <div class="alcor-state-row"><span class="dot ${core.running ? 'dot-on' : 'dot-off'}"></span><span>Alcor 核心：<strong>${core.running ? '运行中' : '未连接'}</strong></span><span class="muted">${core.embedded ? '由本 Agent 启动，退出时一并关闭' : core.running ? '复用外部实例，退出时保留' : ''}</span></div>
         <div class="alcor-state-row"><span class="dot ${core.backendReady ? 'dot-on' : 'dot-off'}"></span><span>QQ 后端：<strong>${core.backendReady ? '账号在线' : '尚未就绪'}</strong></span></div>
         <div class="alcor-state-row"><span class="dot ${connected ? 'dot-on' : 'dot-off'}"></span><span>Agent 事件连接：<strong>${connected ? '已连接' : '未连接'}</strong></span></div>
@@ -102,7 +102,7 @@ async function loadAlcorPage({ quiet = false } = {}) {
         </section>
         <hr class="sl-sep">
         <h3>QQ 后端登录</h3>
-        <p class="hint">先在官方 QQ 中正常登录，再打开上方 Alcor 控制台，在“QQ 接入”中选择进程并连接。当前原生版已验证私聊文字收发。</p>
+        <p class="hint">在 Alcor 控制台的“QQ 接入”中可查看当前会话的连接状态与诊断结果。</p>
         <p class="hint">首次打开此副本会暂停自动回复。确认旧 Agent 已暂停或退出后，点击顶部“恢复”；模型、人格、会话及插件设置仍在原来的页签。</p>
         <hr class="sl-sep">
         <div class="alcor-state-row muted">核心目录：${esc(core.dir || '')}</div>

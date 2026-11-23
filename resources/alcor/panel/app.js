@@ -17,7 +17,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const errors = {
   UNAUTHORIZED: '令牌无效，请重新粘贴本地访问令牌。',
   UNSUPPORTED_QQ: '当前 QQ 版本不受支持，请查看进程信息。',
-  QQ_LOGIN_NOT_CONFIRMED: '未能确认 QQ 已登录的账号。请先在官方 QQ 客户端完成登录；若已登录仍报此错，通常是别的框架残留注入导致，完全退出 QQ 与那些框架后重试。',
+  QQ_LOGIN_NOT_CONFIRMED: '核心未确认当前 QQ 账号。请核对客户端登录状态，并在连接排查中查看同次尝试的身份结果和时间。',
   QQ_SESSION_CONFLICT: 'QQ 进程里仍驻留着其他框架注入的模块，原生接入读不到 QQ 的服务对象。请完全退出这些框架并重启 QQ 客户端，再回来连接。',
   HOST_ALREADY_PRESENT: '该进程已连接其他 Alcor 宿主，请先关闭对应的控制器。',
   NATIVE_RECEIVE_NOT_READY: '原生消息接收通道尚未就绪。',
@@ -229,9 +229,14 @@ function renderOverview(overview, info) {
   if (ready) {
     connection('账号连接正常', 'QQ 在线，OneBot 事件通道已就绪。', '账号在线', 'good');
   } else if (hostConnected) {
-    connection('QQ 原生宿主已连接', backend.receiveReady
-      ? '接收通道已启动，等待消息收发确认。'
-      : '消息接收通道尚未就绪。', '消息未就绪', 'warning');
+    if (backend.serviceBound === false) {
+      connection('QQ 消息收发待确认', '建立连接时未确认消息服务绑定。' +
+        (backend.events === 0 ? '后端尚未记录入站事件。' : '请核对本次测试对应的事件和发送回执。'), '消息未就绪', 'warning');
+    } else {
+      connection('QQ 原生宿主已连接', backend.receiveReady
+        ? '接收通道已启动，等待消息收发确认。'
+        : '消息接收通道尚未就绪。', '消息未就绪', 'warning');
+    }
   } else if (backendConnected && !eventConnected) {
     connection('OneBot 事件通道未连接', 'HTTP 接口可访问。请检查后端的 WebSocket 连接。', '事件未就绪', 'warning');
   } else if (eventConnected && backend.apiReady === false) {
@@ -260,7 +265,7 @@ function renderOverview(overview, info) {
   $('#mode').textContent = state.readOnly ? '只读模式' : '允许发送与修改';
   $('#reconnects').textContent = backend.reconnects ?? 0;
   $('#requests').textContent = state.activeRequests;
-  $('#event-count').textContent = backend.events ?? 0;
+  $('#event-count').textContent = backend.events ?? '未知';
   $('#updated').textContent = '更新于 ' + new Date().toLocaleTimeString();
   $('#http-url').value = info.connection.httpUrl;
   $('#ws-url').value = info.connection.wsUrl;

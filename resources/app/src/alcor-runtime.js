@@ -62,6 +62,10 @@ export function createAlcorRuntime({ getSettings, dataDir, appRoot, nodeExecutab
       const backendType = backend.type ?? config.backendType;
       const connection = { ws: backend.ws, http: backend.http, receiveReady: backend.receiveReady,
         connected: backend.connected, pid: backend.pid, accountLastFour: backend.accountLastFour,
+        serviceBound: typeof backend.serviceBound === 'boolean' ? backend.serviceBound : undefined,
+        identitySource: backend.identitySource === 'memory' ? 'memory' : undefined,
+        events: Number.isSafeInteger(backend.events) && backend.events >= 0 ? backend.events : undefined,
+        lastReceivedAt: backend.lastReceivedAt === null || typeof backend.lastReceivedAt === 'string' ? backend.lastReceivedAt : undefined,
         lastFailure: backend.lastFailure, apiTransport: backend.apiTransport };
       const { statusOnline, statusError } = await queryOneBotStatus(config.httpUrl, config.accessToken, { viaCore: true });
       const backendReady = backend.ws === 'open' && backend.receiveReady !== false && statusOnline === true;

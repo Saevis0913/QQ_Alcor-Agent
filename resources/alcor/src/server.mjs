@@ -18,6 +18,11 @@ const object = value => value !== null && typeof value === 'object' && !Array.is
 const responseEcho = request => object(request) && own(request, 'echo') ? { echo: request.echo } : {};
 const failure = (code, retcode = 1500, extra = {}) => ({ status: 'failed', retcode, data: null, wording: code, ...extra });
 const hash = value => createHash('sha256').update(value).digest();
+const successful = body => body?.status === 'ok' && body.retcode === 0;
+const nativeMessageSends = new Set(['send_private_msg', 'send_group_msg', 'send_msg']);
+function hasMessageReceipt(id) {
+  return typeof id === 'number' ? Number.isSafeInteger(id) && id !== 0 : typeof id === 'string' && /^-?[1-9]\d*$/.test(id);
+}
 
 async function readBody(req, limit, reserve) {
   if (Number(req.headers['content-length']) > limit) { req.resume(); throw new BridgeError('REQUEST_TOO_LARGE', 413); }
@@ -80,32 +85,68 @@ export function createBridge(input, options={}) {
     if (action === 'get_bridge_status') return { code: 200, body: { status: 'ok', retcode: 0, data: status(), ...echo } };
     if (action === 'get_bridge_info') {
       const results = await Promise.allSettled(['get_status', 'get_login_info', 'get_version_info'].map(name => backend.call(name, {}, lease.reserve)));
-      const value = index => results[index].status === 'fulfilled' && results[index].value.status === 'ok' ? results[index].value.data : null;
+      const succeeded = result => result.status === 'fulfilled' && successful(result.value);
+      const value = index => succeeded(results[index]) ? results[index].value.data : null;
       const login = value(1), version = value(2), address = server.address();
+      const id = login?.user_id;
+      const account = (typeof id === 'number' || typeof id === 'string') && /^[1-9]\d{0,9}$/.test(id) ? String(id) : '';
       if (stopped || !address) return { code: 503, body: failure('SHUTTING_DOWN', 1503, echo) };
       const host = address.family === 'IPv6' ? `[${address.address}]` : address.address;
       const httpUrl = `http://${host}:${address.port}`;
       return { code: 200, body: { status: 'ok', retcode: 0, data: {
         bridge: status(), compatibility: config.compatibility,
         connection: { httpUrl, wsUrl: httpUrl.replace('http:', 'ws:') + '/events' },
-        accountLastFour: login?.user_id === undefined ? null : String(login.user_id).slice(-4),
+        accountLastFour: account ? account.slice(-4) : null,
         backendVersion: version ? { name: String(version.app_name ?? '').slice(0, 100), version: String(version.app_version ?? '').slice(0, 100) } : null,
-        backendQueriesSucceeded: results.every(result => result.status === 'fulfilled' && result.value.status === 'ok')
+        backendQueriesSucceeded: results.every(succeeded)
       }, ...echo } };
     }
     if (config.readOnly && !isQuery(action)) return { code: 403, body: failure('READ_ONLY_MODE', 1403, echo) };
+    const nativeSend = config.backend.type === 'native' && nativeMessageSends.has(action);
     try {
       const { echo: _upstreamEcho, ...body } = await compatibleCall(config, backend, action, request.params ?? {}, lease.reserve);
+      if (nativeSend &&
+          (body.wording === 'NATIVE_SEND_UNCONFIRMED' || body.code === 'NATIVE_SEND_UNCONFIRMED' || (successful(body) &&
+            (body.delivery === 'unknown' || !hasMessageReceipt(body.data?.message_id))))) {
+        throw new BridgeError('NATIVE_SEND_UNCONFIRMED', 502, 'unknown');
+      }
       management.log(body.status === 'ok' ? 'info' : 'warn', 'action', action + ' · ' + (body.status === 'ok' ? '完成' : '失败'));
       return { code: 200, body: { ...body, ...echo } };
     }
-    catch (error) { management.log('warn','action',action+' · '+(error.code??'INTERNAL_ERROR'));return { code: error.httpStatus ?? 500, body: failure(error.code ?? 'INTERNAL_ERROR', error.httpStatus ?? 1500, { ...(error.delivery ? { delivery: error.delivery } : {}), ...echo }) }; }
+    catch (error) {
+      const code = error.code ?? 'INTERNAL_ERROR';
+      const unconfirmed = nativeSend && code === 'NATIVE_SEND_UNCONFIRMED';
+      const httpStatus = unconfirmed ? 502 : error.httpStatus;
+      const delivery = unconfirmed ? 'unknown' : error.delivery;
+      management.log('warn', 'action', action + ' · ' + code);
+      return { code: httpStatus ?? 500, body: failure(code, httpStatus ?? 1500, { ...(delivery && { delivery }), ...echo }) };
+    }
   }
   async function getAccount() {
     if (config.backend.type === 'native') return backend.controller.snapshot().connected && backend.receiving ? backend.account : null;
     if (!backend.snapshot().receiveReady) return null;
     const reply = await backend.call('get_login_info', {});
     return reply.status === 'ok' ? reply.data?.user_id : null;
+  }
+  async function dispatchForClient(request, lease, reply) {
+    const operation = dispatch(request, lease);
+    let timer;
+    try {
+      const deadline = new Promise(resolve => {
+        timer = setTimeout(() => {
+          const delivery = isQuery(request?.action ?? '') ? {} : { delivery: 'unknown' };
+          resolve({ code: 504, body: failure('CLIENT_TIMEOUT', 1504, { ...delivery, ...responseEcho(request) }) });
+        }, config.clientTimeoutMs);
+        timer.unref();
+      });
+      const result = await Promise.race([operation, deadline]);
+      clearTimeout(timer);
+      await new Promise(done => reply(result, done));
+    } finally {
+      clearTimeout(timer);
+      // A timed-out send may still complete. Keep it counted until it settles.
+      operation.then(lease.release, lease.release);
+    }
   }
   const outbound = createOutboundTransports(config, {
     getAccount, log: management.log,
@@ -170,7 +211,17 @@ export function createBridge(input, options={}) {
         }
         request = { action: url.pathname.slice(1), params };
       }
-      const result = await dispatch(request, lease); send(res, result.code, result.body);
+      res.off('finish', lease.release);
+      res.off('close', lease.release);
+      if (res.destroyed) { lease.release(); return; }
+      res.setTimeout(0);
+      await dispatchForClient(request, lease, (result, done) => {
+        if (res.destroyed) { done(); return; }
+        res.once('finish', done);
+        res.once('close', done);
+        res.setTimeout(config.clientTimeoutMs);
+        send(res, result.code, result.body);
+      });
     } catch (error) {
       req.resume();
       if (res.headersSent) res.destroy();
@@ -222,15 +273,15 @@ export function createBridge(input, options={}) {
       client.on('message', async (data, binary) => {
         if (binary) { wsSend(client, failure('TEXT_JSON_REQUIRED', 1400)); return; }
         let lease;
-        let timer;
-        const finish = () => { clearTimeout(timer); clientCleanup.get(client)?.delete(finish); lease?.release(); };
         try {
           lease = acquire(); lease.reserve(data.length);
-          clientCleanup.get(client)?.add(finish);
-          timer = setTimeout(() => { client.terminate(); finish(); }, config.clientTimeoutMs); timer.unref();
           let request; try { request = JSON.parse(data.toString('utf8')); } catch { throw new BridgeError('INVALID_JSON', 400); }
-          wsSend(client, (await dispatch(request, lease)).body, finish);
-        } catch (error) { wsSend(client, failure(error.code ?? 'INTERNAL_ERROR', error.httpStatus ?? 1500), finish); }
+          await dispatchForClient(request, lease, (result, done) => {
+            const flushTimer = setTimeout(() => client.terminate(), config.clientTimeoutMs);
+            flushTimer.unref();
+            wsSend(client, result.body, () => { clearTimeout(flushTimer); done(); });
+          });
+        } catch (error) { wsSend(client, failure(error.code ?? 'INTERNAL_ERROR', error.httpStatus ?? 1500), () => lease?.release()); }
       });
     });
   });

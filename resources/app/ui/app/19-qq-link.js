@@ -5,6 +5,7 @@
   const SHORT = {
     ALREADY_CONNECTED: '已连接',
     RECEIVE_NOT_READY: '通道未就绪',
+    QQ_LOGIN_NOT_CONFIRMED: '账号未确认',
     READY_TO_CONNECT: '可以连接',
     NO_QQ_RUNNING: 'QQ 没在运行',
     UNSUPPORTED_BUILD: 'QQ 版本未适配',
@@ -50,6 +51,7 @@
     IDENTITY_ACCOUNT_ZERO: '登录还没走完',
     IDENTITY_CALL_FAILED: '取账号调用失败',
     IDENTITY_UNREADABLE: '这版 QQ 账号读不到',
+    IDENTITY_SERVICE_UNBOUND: '已连上但收发不可用',
     PROFILE_SCAN_LOW_CONFIDENCE: '这版 QQ 结构对不上锚点',
     POLICY_HVCI_ON: '内存完整性开着',
     POLICY_SAC_ENFORCING: '应用控制强制',
@@ -106,6 +108,8 @@
       ${v.detail ? `<p class="qq-detail">${esc(v.detail)}</p>` : ''}
       ${v.hint ? `<p class="qq-hint">${esc(v.hint)}</p>` : ''}
       ${failureText ? `<p class="qq-detail">上次失败 · ${esc(failureText)}</p>` : ''}
+      ${v.code === 'IDENTITY_SERVICE_UNBOUND' || v.connection?.serviceBound === false
+        ? '<p class="qq-detail">消息服务未绑定：账号读到了，但收发不会生效。重启 QQ 再连一次；仍然如此就改用 OneBot 接入。</p>' : ''}
       ${showNative && v.running !== false ? `<ul class="qq-procs">${(v.processes || []).map((row) => rowHtml(row, v.compat?.flags)).join('') || `<li class="qq-empty">${emptyText}</li>`}</ul>` : ''}
       ${compatHtml(v)}
       ${policyHtml(v)}

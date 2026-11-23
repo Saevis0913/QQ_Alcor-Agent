@@ -7,14 +7,15 @@ async function refreshStatus() {
     const s = state.status;
     const dot = $('#onebot-dot');
     const label = $('#onebot-label');
-    dot.className = 'dot ' + (s.onebot.connected ? 'dot-on' : (s.onebot.everConnected ? 'dot-wait' : 'dot-off'));
+    const ready = s.onebot.connected && s.alcor?.backendReady === true;
+    dot.className = 'dot ' + (ready ? 'dot-on' : (s.onebot.connected || s.onebot.everConnected ? 'dot-wait' : 'dot-off'));
     // 未连接时展示后端诊断（2026-09-19）：区分「Alcor 没起 / 没登录账号 / 令牌不匹配」，
     // 不再让用户面对一句干巴巴的"未连接"猜原因。
     const account = s.onebot.self?.nickname || s.onebot.self?.userId;
     label.textContent = s.onebot.connected
       ? `Alcor 已连接${account ? `（${account}）` : ''}${s.alcor?.backendReady ? '' : ' · QQ ' + (window.qqShortOf?.(s.alcor?.qq?.code) || '尚未就绪')}`
       : (s.onebot.diagnosis || 'OneBot 未连接');
-    label.title = s.onebot.connected ? '' : (s.onebot.error || '');
+    label.title = ready ? '' : (s.onebot.diagnosis || s.onebot.error || '');
     $('#model-label').textContent = `模型：${s.orchestrator.model || '未设置'}`;
     const u = s.usage;
     const c = s.cost;

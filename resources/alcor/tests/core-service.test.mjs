@@ -7,12 +7,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket, { WebSocketServer } from '../vendor/ws/wrapper.mjs';
 import { loadConfig, normalizeConfig } from '../src/config.mjs';
 import { createManagement } from '../src/management.mjs';
 import { createOutboundTransports } from '../src/outbound-transports.mjs';
 import { createBridge } from '../src/server.mjs';
+import { NativeBackend } from '../src/native-backend.mjs';
+import { BridgeError } from '../src/backend.mjs';
 import manifest from '../package.json' with { type: 'json' };
 
 const token = 'test-alcor-token-01';
@@ -74,6 +77,190 @@ async function socketAt(t, url) {
 test('accepts bracketed IPv6 in config and uses bare IPv6 for binding', () => {
   const configuration = normalizeConfig(configFor(5311, '[::1]'));
   assert.equal(configuration.listen.host, '::1');
+});
+
+test('an identity failure keeps its original wording even when a module is present', async () => {
+  for (const row of [{ alcorHostLoaded: true }, { foreignModules: ['fixture'] }]) {
+    let attempts = 0;
+    const manager = createManagement({ config: { backend: { type: 'native' } },
+      inventory: async () => [{ pid: 123, ...row }],
+      backend: { controller: {}, connect: async () => { attempts++; throw new Error('QQ_LOGIN_NOT_CONFIRMED'); } } });
+    await assert.rejects(manager.handle('native/connect', 'POST', { pid: 123 }), { code: 'QQ_LOGIN_NOT_CONFIRMED' });
+    assert.equal(attempts, 1);
+    const { entries } = await manager.handle('logs', 'GET');
+    assert.match(entries.at(-1).message, /QQ_LOGIN_NOT_CONFIRMED/);
+  }
+});
+
+test('native check needs a verified listener, online account and ready event channel', async t => {
+  const directory = await tempDirectory(t);
+  const configFile = path.join(directory, 'isolated.json');
+  const backend = { type: 'native', connected: true, qqOnline: false, receiveReady: true, serviceBound: false };
+  const health = { name: 'Alcor', listening: true, ready: false, backend };
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    requests.push([req.method, req.url]);
+    res.end(JSON.stringify(health));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  await fs.writeFile(configFile, JSON.stringify({ listen: { port: server.address().port, token }, backend: { type: 'native' } }));
+  const check = () => run(process.execPath, [fileURLToPath(new URL('../src/main.mjs', import.meta.url)), '--check', '--config', configFile]);
+  await assert.rejects(check(), { code: 2 });
+  health.ready = true;
+  await assert.rejects(check(), { code: 2 });
+  backend.qqOnline = true;
+  backend.receiveReady = false;
+  await assert.rejects(check(), { code: 2 });
+  backend.receiveReady = true;
+  backend.serviceBound = true;
+  const { stdout } = await check();
+  assert.equal(JSON.parse(stdout).ready, true);
+  assert.equal(JSON.parse(stdout).messagesSent, 0);
+  health.name = 'fixture';
+  await assert.rejects(check(), { code: 1 });
+  assert.deepEqual(requests, Array.from({ length: 5 }, () => ['GET', '/health']));
+});
+
+// Exercise the public Alcor listener. Nothing in these tests opens or connects to a desktop process.
+async function nativeInterfaceFixture(t, call, snapshot = { type: 'native', connected: true, receiveReady: true, qqOnline: true }) {
+  let publish;
+  t.mock.method(NativeBackend.prototype, 'start', callback => { publish = callback; });
+  t.mock.method(NativeBackend.prototype, 'close', async () => {});
+  t.mock.method(NativeBackend.prototype, 'call', call);
+  t.mock.method(NativeBackend.prototype, 'snapshot', () => snapshot);
+  const bridge = createBridge({ listen: { port: 0, token }, backend: { type: 'native' },
+    readOnly: false, clientTimeoutMs: 200 });
+  t.after(() => bridge.close());
+  const endpoints = await bridge.listen();
+  return { bridge, ...endpoints, publish, socket: await socketAt(t, endpoints.wsUrl) };
+}
+
+for (const transport of ['http', 'ws']) {
+  test('native listener preserves the event stream and identifies an unconfirmed ' + transport + ' send', { timeout: 5000 }, async t => {
+    let release;
+    let attempts = 0;
+    const pending = new Promise(resolve => { release = resolve; });
+    const { httpUrl, socket, publish, bridge } = await nativeInterfaceFixture(t, async action => {
+      assert.equal(action, 'send_private_msg');
+      attempts++;
+      return pending;
+    });
+    t.after(() => release({ status: 'ok', retcode: 0, data: { message_id: 88 } }));
+    const request = { action: 'send_private_msg', params: { user_id: 102, message: 'fixture' }, echo: 'slow-send' };
+    const frames = [];
+    socket.on('message', chunk => frames.push(JSON.parse(chunk)));
+    let reply;
+    if (transport === 'http') {
+      const response = await fetch(httpUrl, { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(request) });
+      assert.equal(response.status, 504);
+      reply = await response.json();
+    } else {
+      socket.send(JSON.stringify(request));
+      await t.waitFor(() => assert.ok(frames.length), { timeout: 1200 });
+      reply = frames[0];
+    }
+    assert.deepEqual([reply.wording, reply.delivery, reply.echo], ['CLIENT_TIMEOUT', 'unknown', 'slow-send']);
+    assert.equal(bridge.status().activeRequests, 1, 'the underlying send is still outstanding');
+    const received = once(socket, 'message');
+    publish({ post_type: 'message', message_type: 'private', self_id: 101, user_id: 102, message_id: 89 });
+    assert.equal(JSON.parse((await received)[0]).message_id, 89);
+    release({ status: 'ok', retcode: 0, data: { message_id: 88 } });
+    await t.waitFor(() => assert.equal(bridge.status().activeRequests, 0));
+    const next = once(socket, 'message');
+    socket.send(JSON.stringify({ action: 'get_version_info', echo: 'next' }));
+    assert.equal(JSON.parse((await next)[0]).echo, 'next');
+    assert.equal(frames.filter(row => row.echo === 'slow-send').length, transport === 'ws' ? 1 : 0);
+    assert.equal(attempts, 1);
+  });
+}
+
+test('native listener forwards private and group events and returns a distinct confirmed receipt for each send', async t => {
+  const sends = [];
+  const { httpUrl, socket, publish } = await nativeInterfaceFixture(t, async (action, params) => {
+    sends.push({ action, params });
+    return { status: 'ok', retcode: 0, data: { message_id: 100 + sends.length } };
+  });
+  for (const [index, type] of ['private', 'group'].entries()) {
+    const address = type === 'group' ? { group_id: 103 } : { user_id: 102 };
+    const event = { post_type: 'message', message_type: type, ...address, self_id: 101, message_id: index + 1, raw_message: 'incoming fixture' };
+    const received = once(socket, 'message');
+    publish(event);
+    assert.deepEqual(JSON.parse((await received)[0]), event);
+    const action = 'send_' + type + '_msg';
+    const params = { ...address, message: 'outgoing fixture' };
+    const response = await fetch(httpUrl + '/' + action, { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(params) });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).data, { message_id: 101 + index });
+    assert.deepEqual(sends[index], { action, params });
+  }
+  assert.equal(sends.length, 2);
+});
+
+test('an explicit unconfirmed receipt reaches the HTTP caller and leaves an unbound native session unready', async t => {
+  let attempts = 0;
+  const snapshot = { type: 'native', connected: true, receiveReady: true, qqOnline: false, serviceBound: false, events: 0 };
+  const { httpUrl, bridge } = await nativeInterfaceFixture(t, async action => {
+    assert.equal(action, 'send_private_msg');
+    attempts++;
+    throw new BridgeError('NATIVE_SEND_UNCONFIRMED', 502, 'unknown');
+  }, snapshot);
+  const response = await fetch(httpUrl + '/send_private_msg', { method: 'POST',
+    headers: { authorization: 'Bearer ' + token }, body: JSON.stringify({ user_id: 102, message: 'fixture' }) });
+  assert.equal(response.status, 502);
+  const body = await response.json();
+  assert.deepEqual([body.status, body.data, body.wording, body.delivery], ['failed', null, 'NATIVE_SEND_UNCONFIRMED', 'unknown']);
+  assert.equal(bridge.status().ready, false);
+  assert.equal(bridge.status().backend.events, 0);
+  assert.equal(attempts, 1);
+});
+
+test('native message sends only report success for a usable message receipt', async t => {
+  const samples = [
+    { body: { status: 'failed', retcode: 502, wording: 'NATIVE_SEND_UNCONFIRMED' }, status: 502 },
+    { error: new BridgeError('NATIVE_SEND_UNCONFIRMED', 502), status: 502 },
+    { body: { status: 'failed', retcode: 502, code: 'NATIVE_SEND_UNCONFIRMED' }, status: 502 },
+    { body: { status: 'ok', retcode: 0, data: null }, status: 502 },
+    { body: { status: 'ok', retcode: 0, data: { message_id: 0 } }, status: 502 },
+    { body: { status: 'ok', retcode: 0, data: { message_id: {} } }, status: 502 },
+    { body: { status: 'ok', retcode: 0, delivery: 'unknown', data: { message_id: 75 } }, status: 502 },
+    { body: { status: 'ok', retcode: 0, data: { message_id: 515 } }, status: 200 },
+    { body: { status: 'ok', retcode: 0, data: { message_id: '-51' } }, status: 200 }
+  ];
+  let calls = 0;
+  const { httpUrl } = await nativeInterfaceFixture(t, async () => {
+    const sample = samples[calls++];
+    if (sample.error) throw sample.error;
+    return sample.body;
+  });
+  for (const [index, sample] of samples.entries()) {
+    const reply = await fetch(httpUrl, { method: 'POST', headers: { authorization: 'Bearer ' + token },
+      body: JSON.stringify({ action: index % 2 ? 'send_private_msg' : 'send_group_msg', params: {}, echo: index }) });
+    const body = await reply.json();
+    assert.equal(reply.status, sample.status);
+    assert.equal(body.echo, index);
+    if (sample.status === 502) {
+      assert.deepEqual([body.status, body.wording, body.delivery, body.data], ['failed', 'NATIVE_SEND_UNCONFIRMED', 'unknown', null]);
+    } else {
+      assert.deepEqual(body.data, sample.body.data);
+    }
+    assert.equal(calls, index + 1);
+  }
+});
+
+test('bridge info reports only a valid account and a successful login query', async t => {
+  let login;
+  const { httpUrl } = await nativeInterfaceFixture(t, async action => action === 'get_login_info' ? login :
+    { status: 'ok', retcode: 0, data: {} });
+  for (const [id, retcode, expected] of [[0, 0, null], [null, 0, null], ['unknown', 0, null],
+    [['123456'], 0, null], ['123456', 12, null], [123456, 0, '3456']]) {
+    login = { status: 'ok', retcode, data: { user_id: id } };
+    const res = await fetch(httpUrl + '/get_bridge_info', { headers: { authorization: 'Bearer ' + token } });
+    const { data } = await res.json();
+    assert.equal(data.accountLastFour, expected);
+    assert.equal(data.backendQueriesSucceeded, retcode === 0);
+  }
 });
 
 test('reads a UTF-8 BOM in Alcor and imported OneBot JSON files', async (t) => {

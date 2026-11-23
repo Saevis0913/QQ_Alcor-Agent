@@ -120,6 +120,7 @@ function renderChatMessages() {
       <input type="text" id="test-send-text" class="inp" placeholder="手动发一条测试消息" style="flex:1;min-width:120px" />
       <button class="btn btn-small" id="chat-testsend-btn">发送</button>
     </div>
+    <div class="hint" id="chat-testsend-status" role="status"></div>
     <div class="chat-toolbar chat-del-bar" id="chat-del-bar" style="display:none">
       <span class="muted" id="chat-del-count">已选 0 条</span>
       <button class="btn btn-small btn-danger" id="chat-del-confirm-btn">删除选中</button>
@@ -268,16 +269,27 @@ function renderChatMessages() {
       if (cnt) cnt.textContent = `已选 ${state.chatDeleteSelected.size} 条`;
     });
   }
-  $('#chat-testsend-btn').addEventListener('click', async () => {
-    const input = $('#test-send-text');
-    const text = input.value.trim();
-    if (!text) return;
-    await api(`/api/chats/${key.replace(':', '_')}/test-send`, {
-      method: 'POST', body: JSON.stringify({ text })
-    });
-    input.value = '';
-    // 同理，保持当前分页与滚动位置
-    loadChatMessages(key, { keepView: true });
+  const sendButton = $('#chat-testsend-btn');
+  const sendStatus = $('#chat-testsend-status');
+  const sendInput = $('#test-send-text');
+  sendButton.addEventListener('click', async () => {
+    const draft = sendInput.value;
+    const text = draft.trim();
+    if (!text || sendButton.disabled) return;
+    sendButton.disabled = true;
+    sendStatus.textContent = '正在等待发送回执…';
+    try {
+      const receipt = await api(`/api/chats/${key.replace(':', '_')}/test-send`, {
+        method: 'POST', body: JSON.stringify({ text })
+      });
+      if (sendInput.value === draft) sendInput.value = '';
+      sendStatus.textContent = receipt.warning || '已取得发送回执';
+      if (state.currentChatKey === key) loadChatMessages(key, { keepView: true });
+    } catch (error) {
+      sendStatus.textContent = error.message || '发送结果未知，请核对收件端。';
+    } finally {
+      sendButton.disabled = false;
+    }
   });
 
   updateChatMessagesBody();

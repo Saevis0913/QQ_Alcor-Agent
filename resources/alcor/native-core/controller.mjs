@@ -110,8 +110,9 @@ export class NativeController {
   constructor({inventory=discoverQQ,loader=load,query=queryNativeHost,heartbeatMs=5000}={}){
     this.inventory=inventory;this.loader=loader;this.query=query;this.heartbeatMs=heartbeatMs;
     this.owner=null;this.ownerGeneration=0;this.pending=null;this.disconnecting=null;this.tail=Promise.resolve();this.lastError=null;this.lastFailure=null;this.closed=false;
+    this.rebind={attempts:0,lastAt:null,lastStatus:null,upgradedAt:null};this.onServiceBound=null;
   }
-  snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,identitySource:this.owner?.identitySource??null,serviceBound:this.owner?.serviceBound??null,lastError:this.lastError,lastFailure:this.lastFailure};}
+  snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,identitySource:this.owner?.identitySource??null,serviceBound:this.owner?this.owner.serviceBound===true:null,rebindAttempts:this.rebind.attempts,reboundAt:this.rebind.upgradedAt,lastError:this.lastError,lastFailure:this.lastFailure};}
   enqueue(fn){const next=this.tail.then(fn);this.tail=next.catch(()=>{});return next;}
   resumeSelection(){
     const owner=this.owner;
@@ -176,10 +177,10 @@ export class NativeController {
         const id=identity;
         if(account&&id.account!==account)throw new Error('NATIVE_ACCOUNT_CHANGED');
         if(this.closed||this.disconnecting)throw new Error('NATIVE_CONNECT_CANCELLED');
-        owner.account=id.account;owner.identitySource=identitySource;this.lastError=null;this.lastFailure=null;
+        owner.account=id.account;owner.identitySource=identitySource;if(identitySource==='host')owner.serviceBound=true;this.lastError=null;this.lastFailure=null;
         this.timer=setInterval(()=>{if(this.heartbeatPending)return;this.heartbeatPending=true;this.enqueue(async()=>{
           if(this.owner!==owner||this.disconnecting||this.closed)return;
-          try{const r=await this.query({...owner,operation:'heartbeat'});if(r.status!==0)throw new Error('HOST_HEARTBEAT_FAILED');const id=await this.query({...owner,operation:'identity'});if(owner.identitySource!=='memory'&&(id.status!==0||id.flags!==15||id.account!==owner.account))throw new Error('HOST_ACCOUNT_CHANGED');}
+          try{const r=await this.query({...owner,operation:'heartbeat'});if(r.status!==0)throw new Error('HOST_HEARTBEAT_FAILED');if(owner.identitySource==='memory')await this.rebindService(owner);const id=await this.query({...owner,operation:'identity'});if(owner.identitySource!=='memory'&&(id.status!==0||id.flags!==15||id.account!==owner.account))throw new Error('HOST_ACCOUNT_CHANGED');}
           catch{this.lastError='HOST_CONNECTION_LOST';clearInterval(this.timer);try{await this.query({...owner,operation:'stop'});}catch{}this.owner=null;}
         }).finally(()=>{this.heartbeatPending=false;});},this.heartbeatMs);this.timer.unref();
         return this.snapshot();
@@ -220,6 +221,20 @@ export class NativeController {
         timeoutMs: remaining, nativeTimeoutMs: Math.min(nativeTimeoutMs, remaining - pipeOverhead) });
     });
     return Promise.race([request, queuedTimeout]);
+  }
+  // 内存兜底只保证「账号能确认」，不保证「消息服务已绑定」。宿主每次 identity 都会重新取一次服务对象，
+  // 所以这里按心跳节拍重试：一旦 QQ 把消息服务交出来，连接就自动从 identity-only 升级成可收发。
+  async rebindService(owner){
+    if(!this.owner||this.owner!==owner||this.disconnecting||this.closed)return false;
+    this.rebind.attempts++;this.rebind.lastAt=new Date().toISOString();
+    let live=null;
+    try{live=await this.query({...owner,operation:'identity'});}catch{this.rebind.lastStatus=null;return false;}
+    this.rebind.lastStatus=typeof live?.status==='number'?live.status:null;
+    if(!live||live.status!==0||live.flags!==15||!live.account||live.account==='0'||live.account!==owner.account)return false;
+    owner.identitySource='host';owner.serviceBound=true;this.rebind.upgradedAt=this.rebind.lastAt;
+    this.lastIdentityHint={...(this.lastIdentityHint||{}),serviceBound:true,recoveredAt:this.rebind.upgradedAt};
+    try{this.onServiceBound?.(this.snapshot());}catch{}
+    return true;
   }
   async stopOwned(){
     clearInterval(this.timer);const owner=this.owner;if(!owner)return;

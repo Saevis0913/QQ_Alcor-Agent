@@ -214,6 +214,11 @@ export function createRoutes(deps) {
     push('core', state.running ? '核心已运行' : '核心没有起来', state.running ? 'ok' : 'error');
     if (!state.running) return { code: 'CORE_OFFLINE', steps };
 
+    if (state.backendType === 'native' && state.connection?.connected && !state.backendReady) {
+      const verdict = diagnoseQQ(state);
+      push('probe', [verdict.title, verdict.detail].join('。'), 'manual');
+      return { code: verdict.code, steps, connection: state.connection };
+    }
     let verdict = await collectQQDiagnosis(deps, { state, fresh: true });
     push('probe', '当前判定：' + verdict.code + (verdict.title ? '（' + verdict.title + '）' : ''), 'ok');
     if (verdict.code === 'ALREADY_CONNECTED') return { code: 'ALREADY_CONNECTED', steps, connection: verdict.connection || null };
@@ -1864,18 +1869,29 @@ export function createRoutes(deps) {
         if (!onebot.connected || !selfId || store.activeAccount !== selfId) {
           return json(res, 409, { error: '请先连接聊天后端并确认账号。' });
         }
+        const chatKey = `${kind}:${id}`;
+        let data;
         try {
-          const chatKey = `${kind}:${id}`;
-          const data = await onebot.sendText(kind, id, text, { expected_self_id: selfId });
-          if (store.activeAccount !== selfId || onebot.selfId !== selfId) {
-            return json(res, 409, { error: '账号已切换，请在聊天客户端核对发送结果。' });
-          }
-          store.appendSelf(chatKey, { selfId, text, ts: Date.now(), mid: data?.message_id ?? null });
-          emit('chat-update', chatKey);
-          return json(res, 200, { ok: true, messageId: data?.message_id ?? null });
+          data = await onebot.sendText(kind, id, text, { expected_self_id: selfId });
         } catch (error) {
+          if (error?.delivery === 'unknown') {
+            return json(res, 502, { error: `送达状态未知，请先在收件端核对。\n${error.message}`,
+              delivery: 'unknown', nonretryable: true });
+          }
           return json(res, 502, { error: String(error?.message ?? error) });
         }
+        const receipt = { ok: true, messageId: data.message_id };
+        if (store.activeAccount !== selfId || onebot.selfId !== selfId) {
+          return json(res, 200, { ...receipt, archived: false, warning: '已取得发送回执，账号已切换，本条未写入当前会话。' });
+        }
+        try {
+          store.appendSelf(chatKey, { selfId, text, ts: Date.now(), mid: receipt.messageId });
+        } catch {
+          return json(res, 200, { ...receipt, archived: false, warning: '已取得发送回执，本地存档写入失败，请勿重发。' });
+        }
+        try { emit('chat-update', chatKey); }
+        catch { return json(res, 200, { ...receipt, archived: true, warning: '已取得发送回执并存档，请刷新会话查看。' }); }
+        return json(res, 200, receipt);
       }
     },
     {

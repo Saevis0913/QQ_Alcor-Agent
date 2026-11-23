@@ -15,6 +15,8 @@ import { diagnoseQQ, formatReport } from '../src/qq-diagnosis.js';
 import { inspectPeFormat, probeHostArtifact } from '../src/qq-compat.js';
 import { createRoutes } from '../src/routes.js';
 import { createAlcorRuntime } from '../src/alcor-runtime.js';
+import { OneBotClient } from '../src/onebot.js';
+import { SendQueue } from '../src/sender.js';
 import { loadConfig } from '../../alcor/src/config.mjs';
 import { createBridge } from '../../alcor/src/server.mjs';
 
@@ -84,12 +86,14 @@ async function runDoctor(t, processStatus, processReply, options = {}) {
   await fs.mkdir(path.join(app, 'tools'));
   await fs.mkdir(path.join(root, 'resources', 'alcor', 'src'), { recursive: true });
   await fs.writeFile(path.join(app, 'package.json'), JSON.stringify({ type: 'module' }));
-  for (const file of ['qq-diagnosis.js', 'alcor-runtime.js', 'profile.js', 'standard-connection.js', 'injection-policy.js']) {
+  for (const file of ['qq-diagnosis.js', 'alcor-runtime.js', 'profile.js', 'standard-connection.js']) {
     await fs.copyFile(new URL('../src/' + file, import.meta.url), path.join(app, 'src', file));
   }
   await fs.copyFile(new URL('../../alcor/src/config.mjs', import.meta.url), path.join(root, 'resources', 'alcor', 'src', 'config.mjs'));
   // The test exercises the real CLI without starting Windows compatibility probes.
   await fs.writeFile(path.join(app, 'src', 'qq-compat.js'), 'export async function probeQQCompat() { return { testedNative: true }; }');
+  await fs.writeFile(path.join(app, 'src', 'injection-policy.js'),
+    'export const collectPolicyReport = async () => ({}), evaluatePolicy = () => ({}), readPolicyMemory = () => ({});');
   const cli = path.join(app, 'tools', 'qq-doctor.mjs');
   await fs.copyFile(new URL('../tools/qq-doctor.mjs', import.meta.url), cli);
 
@@ -433,4 +437,106 @@ test('says the account came from memory when the host identity was not usable', 
   });
   assert.equal(result.code, 'ALREADY_CONNECTED');
   assert.match(result.detail, /只读内存/);
+});
+
+test('incident replay: the CLI retains the unbound service from health even if the process list is unavailable', async t => {
+  const result = await runDoctor(t, 503, {}, {
+    health: { type: 'native', connected: true, ws: 'open', receiveReady: true, serviceBound: false,
+      identitySource: 'memory', events: 0, lastReceivedAt: null },
+    status: { status: 'ok', retcode: 0, data: { online: false, reason: 'AWAITING_REMOTE_CONFIRMATION' } }
+  });
+  assert.equal(result.verdict.code, 'IDENTITY_SERVICE_UNBOUND');
+  assert.equal(result.report.backendReady, false);
+  assert.equal(result.report.connection.serviceBound, false);
+  assert.equal(result.report.connection.events, 0);
+  assert.equal(result.report.connection.lastReceivedAt, null);
+  assert.match(result.verdict.detail, /serviceBound=false/);
+  assert.doesNotMatch(result.verdict.detail, /收发已实测可用/);
+  assert.equal(result.exitCode, 3);
+});
+
+test('incident replay: absent service telemetry and an idle event counter do not prove an unbound service', () => {
+  for (const backendReady of [true, false]) {
+    const result = diagnoseQQ({ running: true, backendReady,
+      connection: { connected: true, identitySource: 'memory', receiveReady: true, events: 0 } });
+    assert.equal(result.code, backendReady ? 'ALREADY_CONNECTED' : 'RECEIVE_NOT_READY');
+    assert.doesNotMatch(result.detail, /消息服务绑定|收发已实测可用|消息收发通道正常/);
+  }
+});
+
+test('incident replay: a legacy login failure for the current resident host is an identity diagnosis', () => {
+  for (const alcorHostLoaded of [true, false]) {
+    const result = diagnoseQQ({ running: true, processes: [{ ...knownQQ, alcorHostLoaded }],
+      lastFailure: { pid: knownQQ.pid, code: 'QQ_LOGIN_NOT_CONFIRMED' } });
+    assert.equal(result.code, 'QQ_LOGIN_NOT_CONFIRMED');
+    assert.match(result.title, /账号/);
+  }
+  const stale = diagnoseQQ({ running: true, processes: [knownQQ],
+    lastFailure: { pid: 999, code: 'QQ_LOGIN_NOT_CONFIRMED' } });
+  assert.equal(stale.code, 'READY_TO_CONNECT');
+});
+
+for (const httpStatus of [502, 200]) {
+  test('incident replay: unconfirmed send stops the rest of the batch and repeat submissions, HTTP ' + httpStatus, async t => {
+    const client = new OneBotClient({});
+    client.selfInfo = { user_id: 10001 };
+    const queue = new SendQueue({ onebot: client, store: {} });
+    const request = t.mock.method(globalThis, 'fetch', async () => Response.json({
+      wording: 'NATIVE_SEND_UNCONFIRMED', ...(httpStatus === 200 && { status: 'failed', retcode: 502 })
+    }, { status: httpStatus }));
+    const send = () => queue.sendTextBatch('private:10002', ['fixture-first', 'fixture-next']);
+    await assert.rejects(send, { delivery: 'unknown', nonretryable: true });
+    await assert.rejects(send, { delivery: 'unknown', nonretryable: true });
+    assert.equal(request.mock.callCount(), 1);
+  });
+}
+
+test('incident replay: confirmed sends and explicit authentication rejections retain their outcomes', async t => {
+  const client = new OneBotClient({});
+  const request = t.mock.method(globalThis, 'fetch', async () => Response.json({ status: 'ok', retcode: 0, data: { message_id: 47 } }));
+  assert.deepEqual(await client.sendText('private', '10002', 'fixture'), { message_id: 47 });
+  request.mock.mockImplementation(async () => Response.json({ wording: 'UNAUTHORIZED' }, { status: 401 }));
+  await assert.rejects(() => client.sendText('private', '10002', 'fixture'),
+    err => err.code === 'UNAUTHORIZED' && err.delivery === undefined);
+});
+
+test('incident replay: the main status light waits for backend readiness even when the Agent socket is open', async () => {
+  const source = await fs.readFile(new URL('../ui/app/01-boot.js', import.meta.url), 'utf8');
+  const elements = new Map();
+  const status = { onebot: { connected: true, diagnosis: '消息服务未绑定' }, alcor: { backendReady: false },
+    orchestrator: {}, usage: {} };
+  const context = { state: {}, api: async () => status, window: {}, renderBanner() {}, $$: () => [],
+    $: selector => {
+      if (!elements.has(selector)) elements.set(selector, { addEventListener() {} });
+      return elements.get(selector);
+    } };
+  vm.runInNewContext(source, context);
+  await context.refreshStatus();
+  assert.equal(elements.get('#onebot-dot').className, 'dot dot-wait');
+  assert.match(elements.get('#onebot-label').title, /消息服务未绑定/);
+  status.alcor.backendReady = true;
+  await context.refreshStatus();
+  assert.equal(elements.get('#onebot-dot').className, 'dot dot-on');
+});
+
+test('incident replay: checking a connected host with an unready service leaves the live session alone', async () => {
+  const connection = { pid: 123, connected: true, receiveReady: true, serviceBound: false, identitySource: 'memory' };
+  const calls = [];
+  const routes = createRoutes({
+    alcorInspect: async () => ({ running: true, backendReady: false, backendType: 'native', connection }),
+    alcorManage: async action => { calls.push(action); return { ok: false, status: 503 }; }
+  });
+  const route = routes.find(item => item.pattern === '/api/qq/autoconnect');
+  const reply = await route.handler({ body: {}, json: (_res, _status, reply) => reply.data });
+  assert.equal(reply.code, 'IDENTITY_SERVICE_UNBOUND');
+  assert.match(reply.steps.map(step => step.text).join(' '), /serviceBound=false/);
+  assert.deepEqual(calls, []);
+});
+
+test('surfaces a connected session whose message service is not bound', () => {
+  const result = diagnoseQQ({ running: true, processes: [knownQQ], backendReady: true,
+    connection: { connected: true, pid: 101, accountLastFour: '8295', identitySource: 'memory', serviceBound: false, receiveReady: true, events: 0 } });
+  assert.equal(result.code, 'IDENTITY_SERVICE_UNBOUND');
+  assert.match(result.hint, /OneBot/);
+  assert.match(result.detail, /serviceBound=false/);
 });

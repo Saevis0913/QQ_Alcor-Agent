@@ -38,17 +38,6 @@ export function createManagement({config,backend,status,inventory=discoverQQ,sta
   }
   function resources(){const cpus=os.cpus();const usage=cpus.map((c,i)=>{const old=lastCpu[i]?.times??c.times;const all=Object.values(c.times).reduce((a,b)=>a+b,0)-Object.values(old).reduce((a,b)=>a+b,0);return all?Math.round((1-(c.times.idle-old.idle)/all)*100):0;});lastCpu=cpus;return {hostname:os.hostname(),platform:os.platform(),release:os.release(),cpu:{name:cpus[0]?.model??'',cores:cpus.length,usage},memory:{total:os.totalmem(),free:os.freemem(),...process.memoryUsage()},process:{pid:process.pid,node:process.version},hostUptime:Math.floor(os.uptime())};}
   log('info','core','Alcor 管理服务已启动');
-  /* 「未确认登录」是宿主对外的唯一身份失败码，但它同时覆盖「QQ 没登录」和「别的框架把服务对象占了」两种情况。
-     失败后重扫一次该进程，用注入模块的存在把真因还原出来，否则用户会一直被提示去重新登录。 */
-  async function explainConnectFailure(pid,code){
-    if(code!=='QQ_LOGIN_NOT_CONFIRMED')return code;
-    try{
-      const row=(await inventory()).find(r=>r.pid===pid);
-      if(row?.alcorHostLoaded)return 'HOST_ALREADY_PRESENT';
-      if(Array.isArray(row?.foreignModules)&&row.foreignModules.length)return 'QQ_SESSION_CONFLICT';
-    }catch{}
-    return code;
-  }
   async function handle(route,method,body){
     if(route==='overview'&&method==='GET')return {...status(),resources:resources(),recentWarnings:logs.filter(x=>x.level==='warn'||x.level==='error').slice(-5)};
     if(route==='processes'&&method==='GET'){
@@ -58,7 +47,11 @@ export function createManagement({config,backend,status,inventory=discoverQQ,sta
     if(route==='native/connect'&&method==='POST'){
       if(!backend.controller)throw new BridgeError('SELECT_NATIVE_CONFIGURATION_FIRST',409);
       try{const allowUnverified=body.allowUnverified===true;const r=await (nativeResume ? nativeResume.select(body.pid, {allowUnverified}) : backend.connect(body.pid, {allowUnverified}));log('info','native','已连接官方 QQ 进程，群聊与私聊接收已启动');return r;}
-      catch(e){const code=/^[A-Z_]+$/.test(e.message)?e.message:'NATIVE_CONNECT_FAILED';const reason=await explainConnectFailure(body.pid,code);log('warn','native','原生连接失败 · '+reason);throw new BridgeError(reason,409);}
+      catch(e){
+        const code=/^[A-Z_]+$/.test(e.message)?e.message:'NATIVE_CONNECT_FAILED';
+        log('warn','native','原生连接失败 · '+code);
+        throw new BridgeError(code,409);
+      }
     }
     if(route==='native/disconnect'&&method==='POST'){
       if(!backend.controller)throw new BridgeError('NOT_NATIVE_BACKEND',409);

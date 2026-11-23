@@ -207,7 +207,12 @@ export class ChatStore {
     // Incoming traffic and uncertain ordinary images cannot displace confirmed sticker history.
     if (countsTowardStickerWindow(entry)) st.selfMessages = [...st.selfMessages, entry].slice(-10);
     this.#trim(st);
-    saveChat(st, this.#directory());
+    try { saveChat(st, this.#directory()); }
+    catch (error) {
+      // The atomic save left the previous file intact. Reload that version on the next read.
+      this.chats.delete(chatKey);
+      throw error;
+    }
     return entry;
   }
 

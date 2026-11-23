@@ -6,6 +6,7 @@ import { skillManager } from './skills/manager.js';
 import { safeFetchBinary } from './safe-fetch.js';
 import { detectMime } from './image-type.js';
 import { groupFileMetadata, privateFileMetadata, isQqSticker } from './group-media.js';
+import { PendingMessageSends } from './pending-message-sends.js';
 
 const RECONNECT_MIN_MS = 3000;
 const RECONNECT_MAX_MS = 30000;
@@ -60,6 +61,9 @@ const SEND_TIMEOUT_MS = 90000;    // 发送类：协议端要接收 body + 解�
 // `send_(group|private)` 同时覆盖了 `send_group_msg` 与 `send_group_forward_msg`。
 const SLOW_ACTION = /^(send_(group|private)|upload_|_send)/i;
 const MUTATING_ACTION = /^(?:send_|(?:friend|group)_poke$|upload_|set_group_|delete_msg$)/i;
+const MESSAGE_SEND_ACTIONS = new Set(['send_msg', 'send_private_msg', 'send_group_msg']);
+const BEFORE_DISPATCH_ERRORS = new Set(['SHUTTING_DOWN', 'UPSTREAM_WS_AUTH_FAILED', 'UPSTREAM_WS_STOPPED',
+  'UPSTREAM_WS_NOT_READY', 'UPSTREAM_WS_BUSY', 'UPSTREAM_WS_BACKPRESSURE']);
 
 async function responseJson(response, limit) {
   if (!limit) return response.json();
@@ -109,13 +113,14 @@ function describeCause(error, depth = 0) {
 }
 
 export class OneBotClient {
-  constructor({ wsUrl, httpUrl, accessToken, httpToken, onEvent }) {
+  constructor({ wsUrl, httpUrl, accessToken, httpToken, onEvent, receiptDirectory }) {
     this.wsUrl = String(wsUrl || 'ws://127.0.0.1:5310/events');
     this.httpUrl = String(httpUrl || 'http://127.0.0.1:5310').replace(/\/+$/, '');
     this.accessToken = String(accessToken || '');
     // Alcor 允许给 WS 与 HTTP 配不同令牌；httpToken 缺省沿用 accessToken
     this.httpToken = String(httpToken || accessToken || '');
     this.onEvent = onEvent || (() => {});
+    this.pendingMessageSends = receiptDirectory ? new PendingMessageSends(receiptDirectory) : null;
     this.socket = null;
     this.connected = false;
     this.everConnected = false;
@@ -139,6 +144,7 @@ export class OneBotClient {
   #setStatus(connected) {
     this.connected = connected;
     if (connected) this.everConnected = true;
+    else this.selfInfo = null;
     for (const fn of this.statusListeners) {
       try { fn({ connected, everConnected: this.everConnected, error: this.lastConnectError }); } catch { /* ignore */ }
     }
@@ -333,23 +339,41 @@ export class OneBotClient {
         : `OneBot ${action} 请求失败：${cause}`);
       throw MUTATING_ACTION.test(action) ? unknownDelivery(failure) : failure;
     }
+    const body = (await responseJson(res, maxResponseBytes).catch(() => null)) ?? {};
+    const messageSend = MESSAGE_SEND_ACTIONS.has(action);
+    const rejected = body.status === 'failed' && Number.isSafeInteger(body.retcode) && body.retcode !== 0;
+    // Older backends signal an unconfirmed send with the error code alone.
+    const deliveryUnknown = body.delivery === 'unknown' ||
+      (action.startsWith('send_') && (body.wording === 'NATIVE_SEND_UNCONFIRMED' || body.code === 'NATIVE_SEND_UNCONFIRMED'));
     if (!res.ok) {
-      const body = await responseJson(res, maxResponseBytes).catch(() => ({}));
       const hint = res.status === 426
         ? '（HTTP 426：httpUrl 可能指向了 WebSocket 端口，请检查 alcor.httpUrl 是否为 OneBot HTTP API 地址）'
         : '';
       const error = new Error(`OneBot ${action} HTTP ${res.status}${hint}${body.wording ? `：${body.wording}` : ''}`);
       error.httpStatus = res.status;
       error.code = body.wording || body.code || '';
-      const recallUncertain = action === 'delete_msg' && (res.status === 408 || (res.status >= 500 && res.status !== 501));
-      throw body.delivery === 'unknown' || recallUncertain ? unknownDelivery(error) : error;
+      const ambiguousStatus = res.status === 408 || (res.status >= 500 && res.status !== 501);
+      // A gateway can wrap an upstream rejection or a lost reply in the same HTTP 502 envelope.
+      const upstreamRejected = /^UPSTREAM_HTTP_(?:4\d\d|501)$/.test(error.code) && error.code !== 'UPSTREAM_HTTP_408';
+      const knownRejection = rejected && (upstreamRejected || BEFORE_DISPATCH_ERRORS.has(error.code));
+      const uncertain = ambiguousStatus && (action === 'delete_msg' || (messageSend && !knownRejection));
+      throw deliveryUnknown || uncertain ? unknownDelivery(error) : error;
     }
-    const body = await responseJson(res, maxResponseBytes).catch(() => ({}));
-    if (body.status !== 'ok' || body.retcode !== 0 || body.delivery === 'unknown') {
+    if (body.status !== 'ok' || body.retcode !== 0 || deliveryUnknown) {
       const error = new Error(`OneBot ${action} 失败: retcode=${body.retcode ?? body.status} ${body.wording ?? ''}`);
       error.code = body.wording || body.code || '';
-      throw body.delivery === 'unknown' || (body.retcode == null && MUTATING_ACTION.test(action))
+      throw deliveryUnknown || (messageSend && !rejected) || (body.retcode == null && MUTATING_ACTION.test(action))
         ? unknownDelivery(error) : error;
+    }
+    if (messageSend) {
+      const id = body.data?.message_id;
+      const valid = typeof id === 'number' ? Number.isSafeInteger(id) && id !== 0
+        : typeof id === 'string' && /^-?[1-9]\d*$/.test(id);
+      if (!valid) {
+        const error = new Error(`OneBot ${action} 未返回有效消息 ID，送达状态未知`);
+        error.code = 'ONEBOT_MESSAGE_RECEIPT_INVALID';
+        throw unknownDelivery(error);
+      }
     }
     return body.data;
   }
@@ -369,7 +393,11 @@ export class OneBotClient {
     const params = kind === 'private'
       ? { user_id: Number(id), message: segments }
       : { group_id: Number(id), message: segments };
-    return this.call(action, this.#scopeMutation(params, expected_self_id), null, { signal });
+    const scoped = this.#scopeMutation(params, expected_self_id);
+    signal?.throwIfAborted();
+    const send = () => this.call(action, scoped, null, { signal });
+    if (!this.pendingMessageSends || !this.selfId) return send();
+    return this.pendingMessageSends.run(this.selfId, kind, Number(id), segments, send);
   }
 
   #scopeMutation(params, expected) {

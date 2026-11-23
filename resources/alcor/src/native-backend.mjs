@@ -29,7 +29,7 @@ const supportedActions=new Set(NATIVE_ACTIONS);
 export class NativeBackend{
   constructor(config,{controller=new NativeController(),mediaFile}={}){this.config=config;this.controller=controller;this.mediaFile=mediaFile;this.events=0;this.receiving=false;this.confirmed=false;this.receiveGeneration=0;this.messages=new Map();this.media=loadMediaCache(mediaFile);this.seen=new Set();this.messageCounter=randomBytes(4).readUInt32LE()&0x3fffffff;this.lastReceivedAt=null;this.lastError=null;this.directory=new NativeDirectory(this);}
   start(onEvent){this.onEvent=onEvent;this.metaTimer=setInterval(()=>{if(this.receiving&&this.controller.snapshot().connected)this.onEvent?.({time:Math.floor(Date.now()/1000),self_id:Number(this.account),post_type:'meta_event',meta_event_type:'heartbeat',status:{online:this.snapshot().qqOnline,good:this.snapshot().qqOnline},interval:15000});},15000);this.metaTimer.unref();}
-  snapshot(){const s=this.controller.snapshot();return {...s,type:'native',http:s.connected?'reachable':'idle',ws:this.receiving&&s.connected?'open':'unavailable',qqOnline:!!(s.connected&&this.receiving&&this.confirmed),receiveReady:!!(s.connected&&this.receiving),events:this.events,reconnects:this.recoveries??0,lastReceivedAt:this.lastReceivedAt,lastError:s.lastError??this.lastError,capabilityScope:'private-group-text-and-media-receive',onlineBasis:'local identity plus observed send/receive confirmation'};}
+  snapshot(){const s=this.controller.snapshot();return {...s,type:'native',http:s.connected?'reachable':'idle',ws:this.receiving&&s.connected?'open':'unavailable',qqOnline:!!(s.connected&&this.receiving&&this.confirmed),receiveReady:!!(s.connected&&this.receiving&&s.serviceBound!==false),deliveryMode:s.serviceBound===false?'identity-only':'native',events:this.events,reconnects:this.recoveries??0,lastReceivedAt:this.lastReceivedAt,lastError:s.lastError??this.lastError,capabilityScope:'private-group-text-and-media-receive',onlineBasis:'local identity plus observed send/receive confirmation'};}
   recordRecovery(){this.recoveries=(this.recoveries??0)+1;}
   stopReceiving(){clearInterval(this.timer);this.receiving=false;this.confirmed=false;this.receiveGeneration++;this.messages.clear();}
   connect(pid,expected={}){
@@ -164,13 +164,14 @@ export class NativeBackend{
       }catch(e){if(e instanceof BridgeError)throw e;throw new BridgeError(/^[A-Z_]+$/.test(e.message)?e.message:'DIRECTORY_QUERY_FAILED',502);}
     }
     if(action==='get_version_info')return ok({app_name:'Alcor Native',app_version:'0.1.0',protocol_version:'v11'});
-    if(action==='get_status'){const s=this.snapshot();return ok({online:s.qqOnline,good:s.receiveReady&&s.qqOnline,native:s,reason:s.qqOnline?null:s.receiveReady?'AWAITING_REMOTE_CONFIRMATION':'NATIVE_RECEIVE_NOT_READY'});}
+    if(action==='get_status'){const s=this.snapshot();return ok({online:s.qqOnline,good:s.receiveReady&&s.qqOnline,native:s,reason:s.qqOnline?null:(s.serviceBound===false?'NATIVE_SERVICE_UNBOUND':(s.receiveReady?'AWAITING_REMOTE_CONFIRMATION':'NATIVE_RECEIVE_NOT_READY'))});}
     if(action==='get_msg'){const e=this.messages.get(Number(params.message_id));if(!e)throw new BridgeError('NATIVE_MESSAGE_NOT_IN_SESSION_CACHE',404);return ok({...e,real_id:e.sequence});}
     if(action==='get_login_info'){
       const r=await this.controller.request('identity');if(r.status!==0)throw new BridgeError('QQ_LOGIN_NOT_CONFIRMED',503);
       return ok({user_id:Number(r.account),nickname:'QQ '+r.account.slice(-4)});
     }
     if(action==='send_private_msg'||action==='send_group_msg'||(action==='send_msg'&&(params.message_type==='private'||params.group_id||(params.message_type===undefined&&params.user_id&&!params.group_id)))){
+      if(this.controller.snapshot().serviceBound===false)throw new BridgeError('NATIVE_SEND_SERVICE_UNBOUND',503,'unavailable');
       const isGroup=action==='send_group_msg'||(action==='send_msg'&&(params.message_type==='group'||params.group_id));
       let text=params.message,address,sticker,record,video,cover,mixed;
       if(Array.isArray(text)){
