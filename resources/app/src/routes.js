@@ -49,7 +49,7 @@ import { detectDialect as detectThinkingDialect } from './thinking.js';
 import { createQzoneRoutes } from './qzone-routes.js';
 import { releaseProjectUrl } from './release-update.js';
 import { checkForUpdate } from './update-manager.js';
-import { updateState, downloadUpdate, installUpdate, repairUpdate } from './update-manager.js';
+import { updateState, downloadUpdate, installUpdate, repairUpdate, dismissUpdate } from './update-manager.js';
 import { createDesktopActions } from './desktop-actions.js';
 import { createChatActionRoutes } from './chat-actions.js';
 import { chatAllowed } from './inbound-policy.js';
@@ -1488,6 +1488,13 @@ export function createRoutes(deps) {
           const code = String(error?.code || '').match(/^[A-Z_]+$/) ? String(error.code) : 'UPDATE_DOWNLOAD_FAILED';
           return json(res, 502, { status: 'failed', retcode: 502, data: null, wording: code });
         }
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/update-dismiss',
+      handler: async ({ res, json }) => {
+        // 本次启动不再提示这个版本；进程重启后 dismissedLatest 归零，同一版本会再提示。
+        return json(res, 200, { status: 'ok', data: dismissUpdate() });
       }
     },
     {

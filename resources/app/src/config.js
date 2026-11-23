@@ -36,9 +36,10 @@ export const DEFAULT_CONFIG = {
   //   mentionWarmBonus   —— 3 档时的回复概率加成，单位是百分点（0-100 制，默认 +10）。
   //   活跃期不改变用户的档位设置：1/2 档不升档、3 档概率 +mentionWarmBonus、4 档不变。
   behavior: { mentionWarmMinutes: 8, mentionWarmBoost: true, mentionWarmBonus: 10 },
-  // 自动更新：小版本（同主次版本号）默认直接下好并安装，用户不用点按钮。
-  //   原域名/镜像全部失败时会回落 GitHub Releases API，再失败走模型给出的直链。
-  update: { autoInstall: true },
+  // 更新策略：默认 notify —— 发现新版本只在顶部提示，用户点「立即更新」才下载安装。
+  //   auto 才会恢复旧行为（小版本自动下载并安装）；需要配置文件里显式写 update.mode = "auto"。
+  //   更新源/镜像回退不在这里配置，改动它等于把「能收到更新」改坏。
+  update: { mode: 'notify', autoInstall: false },
   qzone: QZONE_DEFAULTS,
   // OpenAI 兼容 API（必填才能跑）
   api: {

@@ -1511,6 +1511,8 @@ async function saveConfig({ quiet = false } = {}) {
       splashEnabled: chk('#cfg-splash-enabled', c.server?.splashEnabled !== false),
       splashSpeed: (() => { const v = Number(val('#cfg-splash-speed', c.server?.splashSpeed ?? 1)); return Number.isFinite(v) ? Math.min(4, Math.max(0.25, v)) : 1; })()
     };
+    const autoUpdate = chk('#cfg-update-auto', c.update?.mode === 'auto');
+    patch.update = { ...(c.update || {}), mode: autoUpdate ? 'auto' : 'notify', autoInstall: autoUpdate };
     patch.ui = {
       ...(c.ui || {}),
       // 主题在点选项时就已应用并写入 localStorage，这里把它一并存到后端以便跨设备保留

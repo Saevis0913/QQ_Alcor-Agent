@@ -2814,6 +2814,10 @@ html[data-theme] .update-banner .ub-actions {
 
 html[data-theme] .update-banner .ub-actions .btn { text-decoration: none; }
 
+/* 更新弹窗里的「这个版本改了什么」列表 */
+.update-summary { margin: 6px 0 0 18px; padding: 0; font-size: 12.5px; line-height: 1.65; color: var(--tx2); }
+.update-summary li { margin: 2px 0; }
+
 /* 二十九、QQ 接入诊断 */
 .qq-card { border: 1px solid var(--line); background: var(--bg2); padding: 14px 16px; }
 .qq-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }

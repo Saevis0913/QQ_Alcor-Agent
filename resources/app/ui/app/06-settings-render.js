@@ -1102,6 +1102,8 @@ function renderDesktopSection(c) {
         <a class="btn btn-small" id="update-project" target="_blank" rel="noopener noreferrer" hidden>在 GitHub 查看项目</a>
         <a class="btn btn-small" id="update-download" target="_blank" rel="noopener noreferrer" hidden>打开下载页面</a>
       </div>
+      <div class="checkbox-row" style="margin-top:8px"><input type="checkbox" id="cfg-update-auto" ${c.update?.mode === 'auto' ? 'checked' : ''} />
+        <span>发现新版本时自动下载并安装<span class="hint">（默认关闭：只在顶部提示，点「立即更新」才下载；勾选后小版本会自动装）</span></span></div>
       <p class="hint" id="update-status-text" role="status">从更新源查看新版本和发布说明。</p>
       <p class="hint" id="update-notes" style="white-space:pre-wrap;overflow-wrap:anywhere" hidden></p>
     </div>`;

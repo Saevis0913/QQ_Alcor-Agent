@@ -52,11 +52,56 @@ let state = {
 };
 let checkTimer = null;
 let bootTimer = null;
+// 本次启动里被「暂不更新 / 关闭弹窗」的版本号。只放内存：重启后同一版本会再提示一次。
+let dismissedLatest = '';
+
+/** 更新策略：默认 notify（只提示）；显式 update.mode="auto" 且没关 autoInstall 才是 auto。 */
+export function resolveUpdateMode(config = getConfig()) {
+  const update = config?.update || {};
+  return update.mode === 'auto' && update.autoInstall !== false ? 'auto' : 'notify';
+}
+
+/** 把 notes.md 压成几行可读概括：去掉标题 / 表格 / 分隔线，保留最多 max 条要点。 */
+export function summarizeNotes(notes, max = 4) {
+  const out = [];
+  for (const raw of String(notes || '').split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith('|') || /^-{3,}$/.test(line)) continue;
+    const text = line.replace(/^[-*+]\s+/, '').replace(/\*\*/g, '').replace(/`/g, '').trim();
+    if (!text || out.includes(text)) continue;
+    out.push(text.length > 120 ? `${text.slice(0, 118)}…` : text);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** 只有用户选了 auto，且这次是补丁版本，才自动下载安装。 */
+export function shouldAutoInstall({ mode, latest, current }) {
+  return mode === 'auto' && Boolean(latest) && isPatchUpdate(latest, current);
+}
+
+/** 这个版本本次启动是否还要提示（换新版本会重新提示）。 */
+export function shouldPromptUpdate({ hasUpdate, latest, dismissedVersion = dismissedLatest }) {
+  return Boolean(hasUpdate && latest) && dismissedVersion !== String(latest || '');
+}
+
+/** 用户点了「暂不更新」或关掉弹窗：本次启动不再提示，重启后恢复。 */
+export function dismissUpdate() {
+  dismissedLatest = String(state.latest || '');
+  state = { ...state, prompt: false };
+  return updateState();
+}
 
 export function updateState() {
+  const mode = resolveUpdateMode();
   return {
     core: localCoreVersion(),
-    bundle: 'agent+core', ...state };
+    bundle: 'agent+core',
+    ...state,
+    mode,
+    prompt: shouldPromptUpdate(state),
+    summary: summarizeNotes(state.notes)
+  };
 }
 
 function sumFileUrl(assetUrl) {
@@ -582,9 +627,12 @@ export function startUpdateWatcher({ current, standard = false, log = () => {}, 
       if (s.ok && s.hasUpdate) log(`[update] 发现新版本 ${s.latest}（当前 ${s.current}）来源 ${s.source || '未知'}`);
       else if (s.ok) log(`[update] 已是最新版本 ${s.current}`);
       else log(`[update] 检查未完成：${s.code || s.error || '未知原因'}`);
-      // 小版本（同主次版本号）更新：直接下好并安装，用户不需要点任何按钮。
-      const auto = getConfig()?.update?.autoInstall !== false;
-      if (s.ok && s.hasUpdate && auto && isPatchUpdate(s.latest, s.current)) {
+      // 默认只提示，等用户点「立即更新」；只有配置里显式写 update.mode="auto" 才自动下载安装。
+      const mode = resolveUpdateMode();
+      if (mode === 'notify' && s.ok && s.hasUpdate) {
+        log(`[update] 新版本 ${s.latest} 等待确认（当前 ${s.current}），不会自动下载`);
+      }
+      if (s.ok && s.hasUpdate && shouldAutoInstall({ mode, latest: s.latest, current: s.current })) {
         try {
           log(`[update] 小版本更新，开始自动下载 ${s.latest}`);
           const ready = await downloadUpdate();
