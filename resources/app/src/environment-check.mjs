@@ -27,7 +27,18 @@ export const QQ_BUILD_PROFILES = Object.freeze([
 ].map(profile => Object.freeze(profile)));
 // END GENERATED QQ PROFILES
 export const SUPPORTED_QQ=QQ_BUILD_PROFILES.map(p=>p.version+' '+p.architecture+'（'+(p.verification==='live'?'已实测':'已静态适配，待运行验证')+'）').join('；');
-export const isStandardEdition = root => fs.existsSync(path.join(root, 'resources', 'app', 'onebot-edition.json'));
+export const editionMarkerPath = root => path.join(root, 'resources', 'app', 'onebot-edition.json');
+export const isStandardEdition = root => fs.existsSync(editionMarkerPath(root));
+
+/** Marker written by the in-app edition switch. Shipped standard editions carry no such flag. */
+export function readEditionMarker(root) {
+  try {
+    const value = JSON.parse(fs.readFileSync(editionMarkerPath(root), 'utf8').replace(/^\uFEFF/, ''));
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch { return null; }
+}
+
+export const isSwitchedEdition = root => readEditionMarker(root)?.switchedInPlace === true;
 const systemScript=String.raw`
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
@@ -111,7 +122,7 @@ export function inspectInstallConfig({installRoot,dataDir=path.join(installRoot,
   const agent=config??(hasAgent?read(agentFile,'AGENT_CONFIG_INVALID'):{});
   const coreFile=path.resolve(agent.alcor?.configFile||path.join(dataDir,'alcor.config.json'));
   const coreConfig=!standard&&fs.existsSync(coreFile)?read(coreFile,'ALCOR_CONFIG_INVALID'):{};
-  if(standard&&(fs.existsSync(coreFile)||fs.existsSync(path.join(installRoot,'resources/alcor/src/main.mjs')))){
+  if(standard&&!isSwitchedEdition(installRoot)&&(fs.existsSync(coreFile)||fs.existsSync(path.join(installRoot,'resources/alcor/src/main.mjs')))){
     issues.push({code:'ONEBOT_SEPARATE_DIRECTORY',status:'error',title:'请选择单独的安装目录',detail:'所选目录已有内置核心安装。',fix:'使用一个新目录安装标准接口版，例如 D:\\Alcor-OneBot。'});
   }
   if(!standard&&isStandardEdition(installRoot)){
@@ -194,7 +205,7 @@ export async function collectEnvironment({installRoot,dataDir,phase='runtime',co
   await mediaChecks;
   if(!standard)add('NATIVE_SCOPE','info','当前原生能力','支持群聊和私聊文本、联系人和群成员查询，以及相应的入站媒体读取。媒体能力还取决于 QQ 资源及上述本地依赖。');
   const errors=checks.filter(c=>c.status==='error'),setup=checks.filter(c=>c.status==='setup');
-  return {schemaVersion:1,version: '0.3.2-as.6',checkedAt:new Date().toISOString(),installRoot:target,phase,checks,canInstall:errors.length===0,canRun:errors.length===0&&setup.length===0};
+  return {schemaVersion:1,version: '0.3.2-as.7',checkedAt:new Date().toISOString(),installRoot:target,phase,checks,canInstall:errors.length===0,canRun:errors.length===0&&setup.length===0};
 }
 export function formatEnvironmentReport(report){
   const labels={ok:'通过',error:'必须修复',setup:'待配置',warning:'提示',info:'说明'};

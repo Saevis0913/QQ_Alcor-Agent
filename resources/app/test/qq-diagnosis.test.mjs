@@ -238,10 +238,10 @@ test('standard connection form can save, preserve and clear independent HTTP and
   const form = { querySelector(key) {
     if (!fields.has(key)) fields.set(key, { value: '', addEventListener() {} });
     return fields.get(key);
-  }, addEventListener(_event, fn) { this.submit = () => fn({ preventDefault() {} }); } };
+  }, addEventListener(event, fn) { if (event === 'submit') this.submit = () => fn({ preventDefault() {} }); } };
   const box = { innerHTML: '', querySelector: () => form };
   const bodies = [];
-  const context = { window: { addEventListener() {} }, document: { addEventListener() {} }, esc: String,
+  const context = { window: { addEventListener() {}, confirm: () => true }, document: { addEventListener() {} }, esc: String,
     CONSOLE_MARKER: '', refreshStatus: async () => {}, api: async (_path, options) => bodies.push(JSON.parse(options.body)) };
   vm.runInNewContext(source, context);
   context.loadAlcorPage = async () => {};

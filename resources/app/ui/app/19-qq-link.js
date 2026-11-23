@@ -119,8 +119,10 @@
         ${canConnect ? '<button class="btn btn-small" data-qq="connect">只连接这一个</button>' : ''}
         ${showNative ? '<button class="btn btn-small" data-qq="restart">重启 QQ 后重试</button>' : ''}
         <button class="btn btn-small" data-qq="rescan">重新检测</button>
+        ${v.code === 'IDENTITY_SERVICE_UNBOUND' && !(v.policy && v.policy.ok) ? '<button class="btn btn-small" data-policy="onebot">改用 OneBot 接入</button>' : ''}
         <span class="qq-note">排查程序（安装目录）：「控制台无法连接，显示被占用点这个，对照最后一行判定码.cmd」</span>
       </div>
+      <div class="qq-switch"></div>
       <p class="qq-status" role="status"></p>`;
   }
 
@@ -161,6 +163,20 @@
     acts.push('<button class="btn btn-small" data-policy="onebot">改用 OneBot 接入</button>');
     return `<div class="qq-policy"><p class="qq-compat">防护策略：${esc(p.summary || '')}</p><ul class="qq-dirs">${items}</ul><div class="qq-acts">${acts.join('')}</div></div>`;
   }
+
+  // 原生注入拿不到消息服务的机器：在这里完成到 OneBot 的切换，用户不用自己动安装目录。
+  function editionFormHtml(v) {
+    const onebot = v.onebotEdition || {};
+    return `<form class="qq-edition" data-edition="onebot">
+      <p class="qq-detail">改用 OneBot 进程外接入：Alcor 通过本机 OneBot v11 服务收发消息，不再向 QQ 注入任何模块。需要一台正在运行的本机 OneBot 服务。</p>
+      <div class="field"><label>HTTP API 地址</label><input name="httpUrl" type="url" value="${esc(onebot.httpUrl || 'http://127.0.0.1:3000')}" required></div>
+      <div class="field"><label>WebSocket 事件地址</label><input name="wsUrl" type="url" value="${esc(onebot.wsUrl || 'ws://127.0.0.1:3001')}" required></div>
+      <div class="field"><label>访问令牌（服务未要求可留空）</label><input name="accessToken" type="password" autocomplete="off"></div>
+      <div class="qq-acts"><button class="btn btn-primary btn-small" type="submit">保存并启用 OneBot 接入</button></div>
+      <p class="qq-status" role="status"></p>
+    </form>`;
+  }
+
   async function paint(box, { status = '' } = {}) {
     box.innerHTML = '<p class="qq-detail">正在检查连接…</p>';
     try {
@@ -273,7 +289,29 @@
               setStatus(box, result.status === 'ok' ? '已请求提权启动，稍等新窗口出现。' : '提权失败：' + (result.error || result.wording || '未知原因'));
               return;
             }
-            setStatus(box, '在「连接方式」里选 OneBot 标准接入，填入已有 OneBot 服务的地址与令牌即可；这条路径不依赖进程注入。');
+            const host = box.querySelector('.qq-switch');
+            if (!host) { setStatus(box, '找不到切换区域，请刷新页面重试。'); return; }
+            host.innerHTML = editionFormHtml(v);
+            const form = host.querySelector('form[data-edition]');
+            const note = form.querySelector('.qq-status');
+            form.addEventListener('submit', async (event) => {
+              event.preventDefault();
+              const data = new FormData(form);
+              const payload = {
+                httpUrl: String(data.get('httpUrl') || '').trim(),
+                wsUrl: String(data.get('wsUrl') || '').trim(),
+                accessToken: String(data.get('accessToken') || '')
+              };
+              note.textContent = '正在保存…';
+              try {
+                const saved = await api('/api/edition/onebot', { method: 'POST',
+                  headers: { 'x-alcor-local-action': 'configure-onebot' }, body: JSON.stringify(payload) });
+                note.textContent = saved?.note || '已保存。重启 Alcor Agent 后启用 OneBot 接入。';
+              } catch (error) {
+                note.textContent = '保存失败：' + String(error?.message || error);
+              }
+            });
+            return;
           } catch (error) {
             setStatus(box, `操作失败：${String(error?.message || error)}`);
           } finally {

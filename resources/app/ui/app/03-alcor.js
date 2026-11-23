@@ -182,6 +182,7 @@ function renderOneBotEdition(box, status, quiet) {
       <div class="alcor-actions">
         <button class="btn btn-primary" type="submit">保存并连接</button>
         <button class="btn" type="button" id="onebot-environment">安装导航与环境检测</button>
+        <button class="btn" type="button" id="onebot-revert">切回内置核心接入</button>
       </div>
       <p class="hint" id="onebot-edition-result" role="status"></p>
     </form>
@@ -211,6 +212,15 @@ function renderOneBotEdition(box, status, quiet) {
       await loadAlcorPage();
     } catch (error) { hint.textContent = String(error.message || error); }
     finally { button.disabled = false; }
+  });
+  box.querySelector('#onebot-revert').addEventListener('click', async () => {
+    const hint = box.querySelector('#onebot-edition-result');
+    if (!window.confirm('切回内置核心接入：Alcor 会重新启动自带核心并向 QQ 注入。确定？')) return;
+    hint.textContent = '正在切回…';
+    try {
+      const saved = await api('/api/edition/native', { method: 'POST', headers: { 'x-alcor-local-action': 'configure-onebot' }, body: '{}' });
+      hint.textContent = saved?.note || '已切回内置核心。重启 Alcor Agent 后生效。';
+    } catch (error) { hint.textContent = '切回失败：' + String(error?.message || error); }
   });
   if (typeof enhanceConcept2UI === 'function') enhanceConcept2UI(box);
 }

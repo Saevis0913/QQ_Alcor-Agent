@@ -16,6 +16,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { getConfig, updateConfig, deepMerge as deepMergeConfig, DATA_DIR, ROOT } from './config.js';
 import { runPreflight } from './preflight.js';
+import { onebotEditionEnabled, readEditionRequest, enableOneBotEdition, disableOneBotEdition, connectionHitsPort } from './onebot-edition.js';
 import { customSearch, SEARCH_PROVIDER_META, testSearchProvider } from './web-search.js';
 import { readUpdateSource, writeUpdateSource } from './update-source.js';
 import { diagnoseQQ, readQQProcessSnapshot, scanFrameworkDirs, qqInstallRoots } from './qq-diagnosis.js';
@@ -304,6 +305,44 @@ export function createRoutes(deps) {
         } catch (error) { return json(res, 400, { error: String(error.message || '无法保存连接设置。') }); }
       }
     },
+    // 接入方式切换：内置核心（原生注入）⇄ OneBot 进程外接入。
+    // 原生注入拿不到 QQ 消息服务的机器，靠这里完成切换，用户不必自己动安装目录。
+    {
+      method: 'GET', pattern: '/api/edition',
+      handler: async ({ json, res }) => json(res, 200, {
+        standard: deps.standard === true,
+        marker: onebotEditionEnabled(path.resolve(ROOT, '../..')),
+        note: deps.standard === true ? '当前是 OneBot 接入' : '当前是内置核心接入'
+      })
+    },
+    {
+      method: 'POST', pattern: '/api/edition/onebot',
+      handler: async ({ req, res, json }) => {
+        if (req.headers['x-alcor-local-action'] !== 'configure-onebot') return json(res, 403, { error: '此操作只能由本机管理端发起。' });
+        if (deps.standard === true) return json(res, 409, { error: '当前已经是 OneBot 接入。' });
+        if (deps.orchestrator?.runningChats?.size) return json(res, 409, { error: '请等当前会话处理完毕，再更改聊天连接。' });
+        const body = await readBody(req);
+        let connection;
+        try { connection = readEditionRequest(body); }
+        catch (error) { return json(res, 400, { error: String(error.message || '接入设置无效。') }); }
+        if (connectionHitsPort(connection, res.socket?.localPort)) return json(res, 400, { error: '聊天后端地址不能指向 Agent 自身。' });
+        updateConfig({ alcor: connection });
+        const saved = enableOneBotEdition({ installRoot: path.resolve(ROOT, '../..'), connection });
+        return json(res, 200, { ok: true, restartRequired: true, marker: saved.marker,
+          note: '设置已保存。重启 Alcor Agent 后启用 OneBot 接入。' });
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/edition/native',
+      handler: async ({ req, res, json }) => {
+        if (req.headers['x-alcor-local-action'] !== 'configure-onebot') return json(res, 403, { error: '此操作只能由本机管理端发起。' });
+        if (deps.standard !== true) return json(res, 409, { error: '当前已经是内置核心接入。' });
+        if (deps.orchestrator?.runningChats?.size) return json(res, 409, { error: '请等当前会话处理完毕，再更改聊天连接。' });
+        const saved = disableOneBotEdition({ installRoot: path.resolve(ROOT, '../..') });
+        return json(res, 200, { ok: true, restartRequired: true, marker: saved.marker,
+          note: '已切回内置核心。重启 Alcor Agent 后生效。' });
+      }
+    },
     {
       method:'GET', pattern:'/api/environment',
       handler:async({res,json})=>{
@@ -345,8 +384,14 @@ export function createRoutes(deps) {
         }
         else if (slRunning && !onebot.connected) onebotDiagnosis = onebot.lastConnectError || '正在连接 Alcor…';
         return json(res, 200, {
-          ...(deps.standard && { onebotEdition: { httpUrl: onebot.httpUrl, wsUrl: onebot.wsUrl,
-            hasToken: Boolean(onebot.accessToken), hasHttpToken: Boolean(cfgNow.alcor?.httpAccessToken) } }),
+          // 两种接入方式都要给前端一份连接信息：内置核心版也可能刚切过去（表单要能回填）。
+          onebotEdition: {
+            httpUrl: onebot.httpUrl || cfgNow.alcor?.httpUrl || '',
+            wsUrl: onebot.wsUrl || cfgNow.alcor?.wsUrl || '',
+            hasToken: Boolean(onebot.accessToken || cfgNow.alcor?.accessToken),
+            hasHttpToken: Boolean(cfgNow.alcor?.httpAccessToken)
+          },
+          edition: { standard: deps.standard === true, marker: onebotEditionEnabled(path.resolve(ROOT, '../..')) },
           onebot: {
             connected: onebot.connected,
             everConnected: onebot.everConnected,

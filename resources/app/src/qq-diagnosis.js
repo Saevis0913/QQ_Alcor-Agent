@@ -188,7 +188,7 @@ export function diagnoseQQ({
     if (connection?.serviceBound === false) {
       return { ...base, code: 'IDENTITY_SERVICE_UNBOUND', title: 'QQ 已连上，但消息收发还不能用',
         detail: '宿主已经在 QQ 进程里、账号也读到了，但这次注入没有拿到 QQ 的消息服务对象（serviceBound=false）：能确认登录，收发消息不会生效。',
-        hint: '先点「重启 QQ」或完全退出 QQ 重新登录后重连；重连后仍然一样，就改用 OneBot 进程外接入（设置 → 接入方式），不要反复注入。' };
+        hint: '先点「重启 QQ」或完全退出 QQ 重新登录后重连；仍然一样就点本卡片上的「改用 OneBot 接入」，让 Alcor 走本机 OneBot 服务收发，不再向 QQ 注入。这台机器上反复重连不会有变化。' };
     }
     const account = connection?.accountLastFour ? `尾号 ${connection.accountLastFour}` : '';
     // /manage/processes 里的连接快照对 receiveReady 恒为 false，是否真正就绪以核心 /get_status 为准。
