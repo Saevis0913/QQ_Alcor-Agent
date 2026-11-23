@@ -6,8 +6,18 @@ import {fileURLToPath} from 'node:url';
 import {queryNativeHost} from './host-client.mjs';
 import {discoverQQ} from './discovery.mjs';
 import {ensureProfilePack} from './host-profiles.mjs';
-import {findQQBuildProfile} from './qq-profiles.mjs';
+import {findQQBuildProfile,QQ_BUILD_PROFILES} from './qq-profiles.mjs';
+
+// 小版本热修常常只换 sha 不换版式：按版本前缀借用同版 profile 的 RVA。
+// 接管前仍会用 vtable 精确校验，RVA 不对只会扫不到对象，不会把错地址写进 QQ。
+export function profileByVersion(version){
+  const v=String(version||'').trim();if(!v)return null;
+  const exact=QQ_BUILD_PROFILES.find(p=>p.version===v);if(exact)return exact;
+  const prefix=v.split('-')[0];
+  return QQ_BUILD_PROFILES.find(p=>p.rvas&&p.version.split('-')[0]===prefix)||null;
+}
 import {readIdentityMemory,pickAccount} from './identity-fallback.mjs';
+import {adoptServicePointer} from './service-adopt.mjs';
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -107,12 +117,13 @@ async function runLoader(loader,pid,nonce,mode,startedAt){
   }
 }
 export class NativeController {
-  constructor({inventory=discoverQQ,loader=load,query=queryNativeHost,heartbeatMs=5000}={}){
-    this.inventory=inventory;this.loader=loader;this.query=query;this.heartbeatMs=heartbeatMs;
+  constructor({inventory=discoverQQ,loader=load,query=queryNativeHost,adopt=adoptServicePointer,heartbeatMs=5000}={}){
+    this.inventory=inventory;this.loader=loader;this.query=query;this.adopt=adopt;this.heartbeatMs=heartbeatMs;
     this.owner=null;this.ownerGeneration=0;this.pending=null;this.disconnecting=null;this.tail=Promise.resolve();this.lastError=null;this.lastFailure=null;this.closed=false;
-    this.rebind={attempts:0,lastAt:null,lastStatus:null,upgradedAt:null};this.onServiceBound=null;
+    this.rebind={attempts:0,lastAt:null,lastStatus:null,upgradedAt:null};
+    this.service={attempts:0,lastAt:0,found:0,lastCode:null,lastObject:null};this.onServiceBound=null;
   }
-  snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,identitySource:this.owner?.identitySource??null,serviceBound:this.owner?this.owner.serviceBound===true:null,rebindAttempts:this.rebind.attempts,reboundAt:this.rebind.upgradedAt,lastError:this.lastError,lastFailure:this.lastFailure};}
+  snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,identitySource:this.owner?.identitySource??null,serviceBound:this.owner?this.owner.serviceBound===true:null,rebindAttempts:this.rebind.attempts,reboundAt:this.rebind.upgradedAt,serviceAdopt:{attempts:this.service.attempts,found:this.service.found,lastCode:this.service.lastCode,lastObject:this.service.lastObject},lastError:this.lastError,lastFailure:this.lastFailure};}
   enqueue(fn){const next=this.tail.then(fn);this.tail=next.catch(()=>{});return next;}
   resumeSelection(){
     const owner=this.owner;
@@ -149,6 +160,7 @@ export class NativeController {
       const creation=/^[1-9]\d{16,18}$/.test(row.creationTime||'')?row.creationTime:null;
       if(startedAt&&creation!==startedAt)throw new Error('NATIVE_PROCESS_CHANGED');
       const owner={pid,nonce:randomBytes(16).toString('hex'),account:null,startedAt:creation};
+      owner.rvas=packProfile?.rvas||findQQBuildProfile(row.moduleName||'wrapper.node',row.sha256)?.rvas||profileByVersion(row.version)?.rvas||null;
       if(this.closed||this.disconnecting)throw new Error('NATIVE_CONNECT_CANCELLED');
       const loaderFn=packLoaderPath?((p,n,m,s)=>this.loader(p,n,m,s,packLoaderPath)):this.loader;
       const inspect=await runLoader(loaderFn,pid,owner.nonce,'inspect-qq',creation);if(inspect.loaded)throw new Error('HOST_ALREADY_PRESENT');
@@ -165,7 +177,7 @@ export class NativeController {
         let identity=hostId, identitySource='host';
         if(!hostId||hostId.status!==0||hostId.flags!==15||!hostId.account||hostId.account==='0'){
           // 宿主取不到 service 时不代表没登录：换只读内存把 uin 取回来，并记下 service 是否为空。
-          const hint=await readIdentityHint(pid,packProfile?.rvas||findQQBuildProfile(row.moduleName||'wrapper.node',row.sha256)?.rvas);
+          const hint=await readIdentityHint(pid,owner.rvas);
           const decision=identityDecision(hostId,hint);
           this.lastIdentityHint={account:decision.identity?.account??null,serviceBound:hint?.serviceBound??null,hostStatus:hostId?.status??null,reason:decision.error||hint?.reason||null,at:new Date().toISOString()};
           if(decision.error)throw new Error(decision.error);
@@ -227,6 +239,7 @@ export class NativeController {
   async rebindService(owner){
     if(!this.owner||this.owner!==owner||this.disconnecting||this.closed)return false;
     this.rebind.attempts++;this.rebind.lastAt=new Date().toISOString();
+    if(owner.serviceBound!==true)await this.adoptService(owner);
     let live=null;
     try{live=await this.query({...owner,operation:'identity'});}catch{this.rebind.lastStatus=null;return false;}
     this.rebind.lastStatus=typeof live?.status==='number'?live.status:null;
@@ -235,6 +248,22 @@ export class NativeController {
     this.lastIdentityHint={...(this.lastIdentityHint||{}),serviceBound:true,recoveredAt:this.rebind.upgradedAt};
     try{this.onServiceBound?.(this.snapshot());}catch{}
     return true;
+  }
+  // 只做「找回已存在的服务对象」：扫 QQ 进程里 vtable 命中 profile 的实例，写回 service_global 共享指针对。
+  // 对象确实不存在时如实返回 SERVICE_OBJECT_MISSING，交给诊断与 OneBot 兜底，不伪造。
+  async adoptService(owner){
+    if(this.service.attempts>=8)return false;
+    const now=Date.now();if(now-this.service.lastAt<45000)return false;
+    const rvas=owner.rvas;
+    if(!rvas?.service_vtable||!rvas?.service_global)return false;
+    this.service.attempts++;this.service.lastAt=now;
+    let result=null;
+    try{
+      result=await this.adopt({pid:owner.pid,vtableRva:Number(rvas.service_vtable),globalRva:Number(rvas.service_global),controlRva:Number(rvas.service_global)+8});
+    }catch{result={ok:false,code:'SERVICE_ADOPT_FAILED'};}
+    this.service.lastCode=result?.code??(result?.ok?'SERVICE_ADOPTED':null);
+    if(result?.ok){this.service.found++;this.service.lastObject=result.report?.object??null;return true;}
+    return false;
   }
   async stopOwned(){
     clearInterval(this.timer);const owner=this.owner;if(!owner)return;
