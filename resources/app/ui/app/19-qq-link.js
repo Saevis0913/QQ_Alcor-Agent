@@ -160,7 +160,6 @@
     const acts = [];
     if ((p.remedies || []).some((r) => r.id === 'defender-exclusion')) acts.push('<button class="btn btn-small" data-policy="defender">为 Alcor 加 Defender 排除项</button>');
     if (p.report?.self?.elevated === false) acts.push('<button class="btn btn-small" data-policy="admin">以管理员重启</button>');
-    acts.push('<button class="btn btn-small" data-policy="onebot">改用 OneBot 接入</button>');
     return `<div class="qq-policy"><p class="qq-compat">防护策略：${esc(p.summary || '')}</p><ul class="qq-dirs">${items}</ul><div class="qq-acts">${acts.join('')}</div></div>`;
   }
 

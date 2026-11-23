@@ -71,7 +71,7 @@ async function loadAlcorPage({ quiet = false } = {}) {
   clearAlcorAccessToken();
   try {
     const status = await api('/api/status');
-    if (status.onebotEdition) {
+    if (status.edition?.standard === true) {
       renderOneBotEdition(box, status, quiet);
       return;
     }

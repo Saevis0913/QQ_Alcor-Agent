@@ -398,13 +398,13 @@ export function createRoutes(deps) {
         }
         else if (slRunning && !onebot.connected) onebotDiagnosis = onebot.lastConnectError || '正在连接 Alcor…';
         return json(res, 200, {
-          // 两种接入方式都要给前端一份连接信息：内置核心版也可能刚切过去（表单要能回填）。
-          onebotEdition: {
+          // 只给 OneBot 接入返回连接信息；内置核心版返回 null，前端据此保持原来的 Alcor 框架页面。
+          onebotEdition: deps.standard === true ? {
             httpUrl: onebot.httpUrl || cfgNow.alcor?.httpUrl || '',
             wsUrl: onebot.wsUrl || cfgNow.alcor?.wsUrl || '',
             hasToken: Boolean(onebot.accessToken || cfgNow.alcor?.accessToken),
             hasHttpToken: Boolean(cfgNow.alcor?.httpAccessToken)
-          },
+          } : null,
           edition: { standard: deps.standard === true, marker: onebotEditionEnabled(path.resolve(ROOT, '../..')) },
           onebot: {
             connected: onebot.connected,
