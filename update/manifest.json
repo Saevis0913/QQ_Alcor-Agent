@@ -1,17 +1,17 @@
 {
   "product": "Alcor Agent",
-  "latest": "0.3.2-as.5",
+  "latest": "0.3.2-as.6",
   "minSupported": "0.2.0",
   "applyMode": "restart",
-  "notes": "0.3.2-as.5 小版本（内核 0.4.1）\n\nQQ 9.9.37 真机验证过了：注入、取账号、收消息、回消息全部走通（本机实测：连接 5.1 秒，收到私聊后正常回复，发送日志有记录）。\n取账号失败不再笼统报「注入被拦」：现在按原因分三种——线程局部服务读不到（SERVICE_NULL）、登录还没走完（ACCOUNT_ZERO）、取账号调用失败（CALL_FAILED），每种都有独立提示和退出码。\n登录后立刻连接、宿主暂时拿不到会话服务时，会改用只读内存取账号（不写 QQ 内存），界面上会注明走的是这条路径；连接与收发都有实测记录。\n防护策略改成「按证据说话」：内存完整性（HVCI）只作环境信息，不当成拦截理由；只有 CodeIntegrity 3077 命中同一文件同一时间段、或 Defender 有同期隔离记录，才判定为真实拦截，对不上就写「未确认」。可一键加 Defender 排除项，也可改用 OneBot 进程外接入。\n首次启动自动自检：缺运行库、目录不可写、配置损坏、宿主目录失效会在启动时自己修好，并把结果写到 data/logs/preflight-last.json。\n安装器升级时结束 QQ 后会自动把它重新拉起来（以前升级完 QQ 就没了）；全新安装不会误启动 QQ。\n\n从 0.3.2 / 0.3.2-as.1 / 0.3.2-as.2 / 0.3.2-as.3 / 0.3.2-as.4 都会自动升到 0.3.2-as.5；装完自动回到界面。",
-  "publishedAt": "2026-11-22T14:20:13.721Z",
+  "notes": "0.3.2-as.6 小版本（内核 0.4.2）\n\n更新方式改了：发现新版本只弹一次提示（版本号 + 这次改了什么 + 发布时间），点「立即更新」才会下载；点「暂不更新」或关掉窗口，本次启动就不再打扰，但下次启动还会提醒。程序本身不再自动下载、自动安装、自动重启。想要回旧行为，设置 → 桌面 → 勾上「发现新版本时自动下载并安装」。\n内核 0.4.2 针对「注入成功、消息发不出去」修了一批：QQ 已连上但消息服务还没绑定时不再假装成功，发送直接报 NATIVE_SEND_SERVICE_UNBOUND 并说明原因；连接后每 5 秒自动重试拿会话服务，一旦拿到就切回原生直连，界面状态同步更新。\n诊断多了一条独立结论 IDENTITY_SERVICE_UNBOUND：以前这种情况会被笼统写成「已连接」或「注入被拦」，现在明确告诉你「连接可用、收发待绑定」。\n安装器升级结束 QQ 后会自动把它重新拉起来；全新安装不会误启动 QQ。\n首次启动自动自检：缺运行库、目录不可写、配置损坏、宿主目录失效会在启动时自己修好，结果写到 data/logs/preflight-last.json。\n\n从 0.3.2 / 0.3.2-as.1 ~ as.5 都会提示升到 0.3.2-as.6；装完自动回到界面。",
+  "publishedAt": "2026-11-23T11:47:16.392Z",
   "rollout": 100,
   "full": {
     "urls": [
-      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.2-as.5-x64.exe"
+      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.2-as.6-x64.exe"
     ],
-    "bytes": 319347908,
-    "sha256": "b9c7c01391c648b49d990107e1d50c5cd53cb2246d12f08d664e8c109a125fc2",
-    "fileName": "Alcor-Agent-Setup-0.3.2-as.5-x64.exe"
+    "bytes": 319400928,
+    "sha256": "a2aea0e7c44b39f6ed9aa8b9534bcba6a2098e7b83141b22a2105192c54cb423",
+    "fileName": "Alcor-Agent-Setup-0.3.2-as.6-x64.exe"
   }
 }
