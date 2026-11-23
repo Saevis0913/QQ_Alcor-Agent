@@ -27,7 +27,16 @@ export const NATIVE_ACTIONS=Object.freeze([
 ]);
 const supportedActions=new Set(NATIVE_ACTIONS);
 export class NativeBackend{
-  constructor(config,{controller=new NativeController(),mediaFile}={}){this.config=config;this.controller=controller;this.mediaFile=mediaFile;this.events=0;this.receiving=false;this.confirmed=false;this.receiveGeneration=0;this.messages=new Map();this.media=loadMediaCache(mediaFile);this.seen=new Set();this.messageCounter=randomBytes(4).readUInt32LE()&0x3fffffff;this.lastReceivedAt=null;this.lastError=null;this.directory=new NativeDirectory(this);}
+  constructor(config,{controller=new NativeController(),mediaFile}={}){this.config=config;this.controller=controller;this.mediaFile=mediaFile;this.events=0;this.receiving=false;this.confirmed=false;this.receiveGeneration=0;this.messages=new Map();this.media=loadMediaCache(mediaFile);this.seen=new Set();this.messageCounter=randomBytes(4).readUInt32LE()&0x3fffffff;this.lastReceivedAt=null;this.lastError=null;this.directory=new NativeDirectory(this);this.controller.onServiceBound=()=>this.resumeReceiving().catch(()=>{});}
+  beginReceiving(){clearInterval(this.timer);this.receiving=true;this.lastError=null;this.timer=setInterval(()=>this.poll().catch(()=>{}),350);this.timer.unref();}
+  async resumeReceiving(){
+    // 心跳接管到消息服务后由控制器回调：这时才真正开始收消息，不重启会话。
+    if(this.receiving||!this.controller.snapshot().connected)return;
+    const generation=this.receiveGeneration;
+    const r=await this.controller.request('receiveStart').catch(()=>null);
+    if(!r||r.status!==0||generation!==this.receiveGeneration)return;
+    this.beginReceiving();this.recordRecovery();
+  }
   start(onEvent){this.onEvent=onEvent;this.metaTimer=setInterval(()=>{if(this.receiving&&this.controller.snapshot().connected)this.onEvent?.({time:Math.floor(Date.now()/1000),self_id:Number(this.account),post_type:'meta_event',meta_event_type:'heartbeat',status:{online:this.snapshot().qqOnline,good:this.snapshot().qqOnline},interval:15000});},15000);this.metaTimer.unref();}
   snapshot(){const s=this.controller.snapshot();return {...s,type:'native',http:s.connected?'reachable':'idle',ws:this.receiving&&s.connected?'open':'unavailable',qqOnline:!!(s.connected&&this.receiving&&this.confirmed),receiveReady:!!(s.connected&&this.receiving&&s.serviceBound!==false),deliveryMode:s.serviceBound===false?'identity-only':'native',events:this.events,reconnects:this.recoveries??0,lastReceivedAt:this.lastReceivedAt,lastError:s.lastError??this.lastError,capabilityScope:'private-group-text-and-media-receive',onlineBasis:'local identity plus observed send/receive confirmation'};}
   recordRecovery(){this.recoveries=(this.recoveries??0)+1;}
@@ -47,12 +56,13 @@ export class NativeBackend{
       if(id.status!==0||id.flags!==15||!id.account||id.account==='0')throw new BridgeError('QQ_LOGIN_NOT_CONFIRMED',503);
       if(expected.account&&id.account!==expected.account)throw new BridgeError('HOST_ACCOUNT_CHANGED',409);
       if(this.account!==id.account){this.messages.clear();this.seen.clear();this.confirmed=false;this.directory.clear();}this.account=id.account;
-      if(!this.receiving){
+      // 消息服务还没绑定时先建成 identity-only 会话：心跳里的接管拿到指针后会回调 resumeReceiving。
+      if(!this.receiving&&s.serviceBound!==false){
         const r=await this.controller.request('receiveStart');if(r.status!==0)throw new BridgeError('NATIVE_RECEIVE_START_FAILED',503);
         if(generation!==this.receiveGeneration)throw new BridgeError('NATIVE_CONNECT_CANCELLED',409);
-        this.receiving=true;this.lastError=null;this.timer=setInterval(()=>this.poll().catch(()=>{}),350);this.timer.unref();
+        this.beginReceiving();
       }
-      return {...s,receiveReady:true};
+      return {...s,receiveReady:!!(this.receiving&&s.serviceBound!==false)};
     }catch(error){this.stopReceiving();try{await this.controller.disconnect();}catch{}throw error;}
   }
   async poll(){

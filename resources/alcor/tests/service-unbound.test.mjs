@@ -65,3 +65,46 @@ test('a host-bound session keeps the native delivery mode', () => {
   assert.equal(snapshot.receiveReady, true);
   assert.equal(snapshot.deliveryMode, 'native');
 });
+test('a session that cannot bind the service is kept for a later upgrade instead of failing connect', async () => {
+  const calls = [];
+  const controller = {
+    connect: async () => ({ connected: true, serviceBound: false, identitySource: 'memory' }),
+    request: async action => {
+      calls.push(action);
+      if (action === 'identity') return { status: 0, flags: 15, account: '123456789' };
+      if (action === 'receiveStart') return { status: 1 };
+      return { status: 0 };
+    },
+    snapshot: () => ({ connected: true, serviceBound: false, identitySource: 'memory' }),
+    disconnect: async () => {},
+  };
+  const backend = new NativeBackend({}, { controller, mediaFile: mediaFile() });
+  const result = await backend.openConnection(4242);
+  assert.equal(result.receiveReady, false);
+  assert.equal(backend.receiving, false);
+  assert.equal(calls.includes('receiveStart'), false, '未绑定服务时不该去开收信');
+});
+
+test('the controller callback starts receiving once the service is adopted', async () => {
+  const calls = [];
+  let bound = false;
+  const controller = {
+    connect: async () => ({ connected: true, serviceBound: false, identitySource: 'memory' }),
+    request: async action => {
+      calls.push(action);
+      if (action === 'identity') return { status: 0, flags: 15, account: '123456789' };
+      return { status: 0 };
+    },
+    snapshot: () => ({ connected: true, serviceBound: bound, identitySource: bound ? 'host' : 'memory' }),
+    disconnect: async () => {},
+  };
+  const backend = new NativeBackend({}, { controller, mediaFile: mediaFile() });
+  await backend.openConnection(4242);
+  assert.equal(backend.receiving, false);
+  bound = true;
+  await controller.onServiceBound();
+  assert.equal(backend.receiving, true);
+  assert.equal(calls.filter(item => item === 'receiveStart').length, 1);
+  assert.equal(backend.snapshot().receiveReady, true);
+  backend.stopReceiving();
+});

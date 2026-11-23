@@ -29,6 +29,9 @@ const nativeDir=fileURLToPath(new URL('../artifacts/native/',import.meta.url));
    所以路径不干净时，先把加载器和 DLL 搬到纯 ASCII、短路径（ProgramData\Alcor\host\<目录哈希>）再从那里注入。
    路径本来干净就不拷贝，保持原行为。 */
 const HOST_FILES=['qq-host-loader.exe','alcor-host.dll'];
+/* 宿主启动后要用 alcor-host.dll 旁边的 runtime/alcor-runtime-<sha>.dll 打开回调运行时；
+   只搬两个 exe/dll 会让这一步找不到文件，receive 报 LB_HOST_IO。整目录一起搬。 */
+const HOST_DIRS=['runtime'];
 const ASCII_PATH=/^[\x20-\x7e]+$/;
 function stageDirFor(dir){
   if(ASCII_PATH.test(dir)&&dir.length<=160)return null;
@@ -36,14 +39,24 @@ function stageDirFor(dir){
   const tag=createHash('sha256').update(dir).digest('hex').slice(0,8);
   return path.join(base,'Alcor','host',tag);
 }
-function hostArtifacts(){
-  const stage=stageDirFor(nativeDir);
-  if(!stage)return {loader:path.join(nativeDir,'qq-host-loader.exe'),staged:false,dir:nativeDir};
+function hostArtifacts(dir=nativeDir){
+  const stage=stageDirFor(dir);
+  if(!stage)return {loader:path.join(dir,'qq-host-loader.exe'),staged:false,dir};
   fs.mkdirSync(stage,{recursive:true});
   for(const name of HOST_FILES){
-    const src=path.join(nativeDir,name);const out=path.join(stage,name);
+    const src=path.join(dir,name);const out=path.join(stage,name);
     const from=fs.statSync(src);const to=fs.existsSync(out)?fs.statSync(out):null;
     if(!to||to.size!==from.size||to.mtimeMs<from.mtimeMs)fs.copyFileSync(src,out);
+  }
+  for(const name of HOST_DIRS){
+    const src=path.join(dir,name);if(!fs.existsSync(src))continue;
+    const out=path.join(stage,name);fs.mkdirSync(out,{recursive:true});
+    for(const entry of fs.readdirSync(src)){
+      const from=path.join(src,entry);const to=path.join(out,entry);
+      if(!fs.statSync(from).isFile())continue;
+      const a=fs.statSync(from);const b=fs.existsSync(to)?fs.statSync(to):null;
+      if(!b||b.size!==a.size||b.mtimeMs<a.mtimeMs)fs.copyFileSync(from,to);
+    }
   }
   return {loader:path.join(stage,'qq-host-loader.exe'),staged:true,dir:stage};
 }
