@@ -222,8 +222,13 @@ export function diagnoseQQ({
     const title = connection?.serviceBound === false ? 'QQ 消息服务绑定待确认' : 'QQ 宿主已连接，消息通道待确认';
     // 入站到过但没发布，要把「到了什么」写出来：自发的回执（528/732）与真没解出来的私聊，处理方式完全不同。
     const progress = connection?.receiveProgress;
+    const last = progress?.lastUnrecognized;
+    const lastNote = last
+      ? (last.selfEcho === true ? `${last.type ?? '未知'}（自己发出的消息回执）`
+        : last.selfEcho === false ? `${last.type ?? '未知'}（别人发来但没解出来）` : '未知')
+      : '';
     const inputNote = progress?.inputs > 0
-      ? `已收到 ${progress.inputs} 条入站数据，发布 ${progress.messagesPublished ?? 0} 条；最近一条未发布类型 ${progress.lastUnrecognized?.type ?? '未知'}。`
+      ? `已收到 ${progress.inputs} 条入站数据，发布 ${progress.messagesPublished ?? 0} 条；最近一条未发布类型 ${lastNote}。`
       : '';
     return { ...base, code: 'RECEIVE_NOT_READY', title: [title, account].filter(Boolean).join(' · '),
       detail: memoryNote + (connection?.serviceBound === false ? '建立连接时未确认消息服务绑定。' : '') + inputNote + '当前会话的消息收发尚未确认。',

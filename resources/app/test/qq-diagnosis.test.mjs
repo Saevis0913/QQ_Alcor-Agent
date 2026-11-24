@@ -542,17 +542,13 @@ test('surfaces a connected session whose message service is not bound', () => {
 });
 
 test('inbound data that never published names the element type it carried', () => {
-  const progress = { inputs: 3, messagesPublished: 0, lastUnrecognized: { bytes: 216, type: 528 } };
-  const withInputs = diagnoseQQ({ running: true, backendReady: false,
-    connection: { connected: true, identitySource: 'memory', serviceBound: true, events: 0, receiveProgress: progress } });
-  assert.equal(withInputs.code, 'RECEIVE_NOT_READY');
-  assert.match(withInputs.detail, /已收到 3 条入站数据，发布 0 条/);
-  assert.match(withInputs.detail, /类型 528/);
-  const silent = diagnoseQQ({ running: true, backendReady: false,
-    connection: { connected: true, identitySource: 'memory', serviceBound: true, events: 0, receiveProgress: { inputs: 0, messagesPublished: 0 } } });
-  assert.doesNotMatch(silent.detail, /条入站数据/);
-  const unknown = diagnoseQQ({ running: true, backendReady: false,
-    connection: { connected: true, identitySource: 'memory', serviceBound: true, events: 0,
-      receiveProgress: { inputs: 1, messagesPublished: 0, lastUnrecognized: { bytes: 8, type: null } } } });
-  assert.match(unknown.detail, /类型 未知/);
+  const run = receiveProgress => diagnoseQQ({ running: true, backendReady: false,
+    connection: { connected: true, identitySource: 'memory', serviceBound: true, events: 0, receiveProgress } }).detail;
+  const echo = run({ inputs: 3, messagesPublished: 0, lastUnrecognized: { bytes: 266, type: 166, selfEcho: true } });
+  assert.match(echo, /已收到 3 条入站数据，发布 0 条/);
+  assert.match(echo, /166（自己发出的消息回执）/);
+  const foreign = run({ inputs: 2, messagesPublished: 0, lastUnrecognized: { bytes: 266, type: 166, selfEcho: false } });
+  assert.match(foreign, /166（别人发来但没解出来）/);
+  assert.doesNotMatch(run({ inputs: 0, messagesPublished: 0 }), /条入站数据/);
+  assert.match(run({ inputs: 1, messagesPublished: 0, lastUnrecognized: { bytes: 8, type: null } }), /类型 未知/);
 });

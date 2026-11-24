@@ -19,8 +19,16 @@ import {loadMediaCache,saveMediaCache} from '../native-core/media-cache.mjs';
 import {readForward,sendPoke} from '../native-core/message-actions.mjs';
 import {encodeReceivedSticker} from '../native-core/received-sticker.mjs';
 import {recallMessage,rememberSent} from '../native-core/message-recall.mjs';
-/** Element type of a push the decoder declined, or null when the payload is not readable. Nothing but the small integer leaves this function. */
-export function pushInputType(payload){try{return pushNumber(pushChild(pushChild(pushFields(payload),1),2),1)||null;}catch{return null;}}
+/** Shape of a push the decoder declined: element type plus whether we sent it ourselves. No identifiers leave this function. */
+export function describePushInput(payload,account){
+  try{
+    const message=pushChild(pushFields(payload),1);
+    const type=pushNumber(pushChild(message,2),1)||null;
+    const from=pushNumber(pushChild(message,1),1);
+    const self=Number(account)||0;
+    return {type,selfEcho:from&&self?from===self:null};
+  }catch{return {type:null,selfEcho:null};}
+}
 const ok=data=>({status:'ok',retcode:0,data});
 export const NATIVE_ACTIONS=Object.freeze([
   'get_status','get_login_info','get_version_info','get_msg','send_private_msg','send_group_msg','send_msg',
@@ -89,7 +97,7 @@ export class NativeBackend{
         continue;
       }
       let event;try{event=decodeMessagePush(packet.payload,this.account);}catch{this.receiveProgress.totals.parseErrors++;this.lastError='NATIVE_PUSH_PARSE_FAILED';continue;}
-      if(!event){this.receiveProgress.totals.unrecognized++;this.lastUnrecognized={bytes:packet.payload.length,type:pushInputType(packet.payload),at:new Date().toISOString()};continue;}
+      if(!event){this.receiveProgress.totals.unrecognized++;this.lastUnrecognized={bytes:packet.payload.length,...describePushInput(packet.payload,this.account),at:new Date().toISOString()};continue;}
       // 普通私聊（没有群目录字段）在当前会话的这一轮里立刻发布，不等元数据；重复到达只保留一条。
       await publishDecodedMessage(this,event,generation);
       if(generation!==this.receiveGeneration||!this.receiving)return;
