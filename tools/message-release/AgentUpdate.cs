@@ -14,10 +14,19 @@ using System.Xml.Linq;
 using Microsoft.Win32.SafeHandles;
 
 internal static class AgentUpdate {
+#if CORE_RECEIVE_R1
+    private const string Stamp = ".alcor-core-receive-r1", TagId = "alcor-core-receive-r1";
+    private const string Component = @"resources\alcor", Edition = "Alcor 核心 0.4.1 / 0.4.3", Release = "收件修复 R1";
+    private const string PackageVersion = @"0\.4\.(1|3)";
+    private static readonly string[] Allowed = { "src/native-backend.mjs", "src/received-message.mjs" };
+#else
     private const string Stamp = ".alcor-message-rc2";
-    private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
+    private const string TagId = "alcor-agent-receipts-rc2", Component = @"resources\app", Edition = "Alcor Agent 0.3.2-as.5", Release = "RC2";
+    private const string PackageVersion = @"0\.3\.2-as\.5";
     private static readonly string[] Allowed = { "src/app.js", "src/onebot.js", "src/routes.js", "src/sender.js",
         "src/store.js", "ui/app/04-archive-usage.js", "src/pending-message-sends.js" };
+#endif
+    private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
 
     [DllImport("ktmw32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     private static extern SafeFileHandle CreateTransaction(IntPtr sa, IntPtr id, uint options, uint isolation, uint flags, uint timeout, string description);
@@ -111,21 +120,25 @@ internal static class AgentUpdate {
         }
     }
     private static XElement Profile(string app, XElement catalog, out bool installed) {
+        var pkg=Read(Path.Combine(app,"package.json"));
+        Check(pkg!=null && Regex.IsMatch(Utf8.GetString(pkg),@"""version""\s*:\s*"""+PackageVersion+@""""),"此包适用于 "+Edition+"。");
         var stamp=Read(Path.Combine(app,Stamp)); installed=stamp!=null;
         foreach(var p in catalog.Elements("profile")) {
+            var version=(string)p.Attribute("package");
+            if(version!=null && !Regex.IsMatch(Utf8.GetString(pkg),@"""version""\s*:\s*"""+Regex.Escape(version)+@""""))continue;
             var files=p.Elements("file").Select(f=>(string)f.Attribute("path")).ToArray();
             Check(files.SequenceEqual(Allowed),"内置文件清单异常。");
             if(installed && !stamp.SequenceEqual(Tag(p)))continue;
             if(Matches(app,p,installed?"after":"before")) return p;
         }
-        throw new InvalidDataException("7 个目标文件未匹配此包支持的 as.5 基线，或状态记录与文件不一致。没有覆盖文件。");
+        throw new InvalidDataException("目标程序未匹配此包支持的基线，或状态记录与文件不一致。没有覆盖文件。");
     }
-    private static byte[] Tag(XElement p) {return Utf8.GetBytes("alcor-agent-receipts-rc2\n"+(string)p.Attribute("id")+"\n");}
+    private static byte[] Tag(XElement p) {return Utf8.GetBytes(TagId+"\n"+(string)p.Attribute("id")+"\n");}
     private static void Run(string mode,string directory) {
         var root=Path.GetFullPath(directory);
         Check(!root.StartsWith(@"\\") && !String.Equals(root.TrimEnd('\\'),Path.GetPathRoot(root).TrimEnd('\\'),StringComparison.OrdinalIgnoreCase),
             "请选择本地 Alcor 安装目录。");
-        var app=Path.Combine(root,@"resources\app"); RejectLinks(app);
+        var app=Path.Combine(root,Component); RejectLinks(app);
         var exe=Path.Combine(root,"Alcor Agent.exe"); var node=Path.Combine(root,@"runtime\node.exe");
         RejectLinks(exe); RejectLinks(node);
         Check(File.Exists(exe) && File.Exists(node),"请选择包含 Alcor Agent.exe 和 runtime 的安装根目录。");
@@ -142,17 +155,15 @@ internal static class AgentUpdate {
             using(var child=Process.Start(start)){child.WaitForExit();Check(child.ExitCode==0,"现场核对未完成。");}
             return;
         }
-        var pkg=Read(Path.Combine(app,"package.json"));
-        Check(pkg!=null && Regex.IsMatch(Utf8.GetString(pkg),@"""version""\s*:\s*""0\.3\.2-as\.5"""), "此包适用于 Alcor Agent 0.3.2-as.5。");
         XElement catalog;
         using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("Alcor.deltas")) catalog=XElement.Load(stream);
         bool installed; var p=Profile(app,catalog,out installed);
-        Console.WriteLine("程序基线 {0}，7/7 文件符合预期，状态 {1}。",p.Attribute("id").Value,installed?"RC2":"原基线");
+        Console.WriteLine("程序基线 {0}，{1}/{1} 个目标符合预期，状态 {2}。",p.Attribute("id").Value,Allowed.Length,installed?Release:"原基线");
         if(mode=="check" || (mode=="apply")==installed) return;
         RefuseRunning(root);
         using(var guiGate=File.Open(exe,FileMode.Open,FileAccess.Read,FileShare.None))
         using(var nodeGate=File.Open(node,FileMode.Open,FileAccess.Read,FileShare.None))
-        using(var tx=CreateTransaction(IntPtr.Zero,IntPtr.Zero,0,0,0,60000,"Alcor Agent RC2 public message files")) {
+        using(var tx=CreateTransaction(IntPtr.Zero,IntPtr.Zero,0,0,0,60000,TagId)) {
             if(tx.IsInvalid)throw new Win32Exception(Marshal.GetLastWin32Error(),"此卷无法建立文件事务。");
             bool committed=false;
             try {
@@ -171,16 +182,16 @@ internal static class AgentUpdate {
         }
         bool final;var verified=Profile(app,catalog,out final);
         Check(final!=installed && verified==p,"提交后的哈希校验异常，请运行 check。");
-        Console.WriteLine(final?"已安装 RC2，提交后 7/7 文件校验通过。":"已回到安装前的程序文件，7/7 校验通过。");
+        Console.WriteLine("{0}，提交后 {1}/{1} 个目标校验通过。",final?"已安装 "+Release:"已回到安装前的程序文件",Allowed.Length);
     }
     [STAThread] private static int Main(string[] args) {
         try {
             Console.OutputEncoding=Encoding.UTF8;
             string mode=args.Length>0?args[0]:"check";
-            Check(new[]{"check","apply","rollback","observe"}.Contains(mode) && args.Length<=2,"用法：Alcor-RC2.exe check|apply|rollback|observe [安装目录]");
+            Check(new[]{"check","apply","rollback","observe"}.Contains(mode) && args.Length<=2,"用法：更新程序 check|apply|rollback|observe [安装目录]");
             string dir=args.Length==2?args[1]:null;
             if(dir==null)using(var picker=new FolderBrowserDialog()){
-                picker.Description="选择已安装的 Alcor Agent 0.3.2-as.5 根目录";picker.ShowNewFolderButton=false;
+                picker.Description="选择已安装的 "+Edition+" 所在的 Alcor 安装根目录";picker.ShowNewFolderButton=false;
                 if(picker.ShowDialog()!=DialogResult.OK)return 2;dir=picker.SelectedPath;
             }
             Run(mode,dir);return 0;

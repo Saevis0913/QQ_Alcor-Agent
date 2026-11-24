@@ -102,6 +102,8 @@ const FAILURE_TEXT = {
     '核对当前账号状态并保存本次诊断。'],
   IDENTITY_SERVICE_UNBOUND: ['注入成功，但 QQ 没有交出消息服务', '宿主已在 QQ 内运行并读到了账号，但这次注入没拿到 QQ 的消息服务对象：账号能确认，消息收发不会生效。',
     '先重启 QQ 再连一次；仍然如此就改用 OneBot 进程外接入。这不是杀软、也不是内存完整性拦的。'],
+  SERVICE_NEVER_CREATED: ['QQ 从启动起就没有消息服务对象', '账号读得到，但按 profile 的 vtable 扫描整个可读内存 0 命中：这台机器的 QQ 没有创建消息服务对象，属于启动阶段就没走到那一步。',
+    '换一个 QQ 安装（官方安装包、本地盘、干净目录）重新登录后用同一份证据复测；仍为 0 命中就改用 OneBot 进程外接入。'],
   PROFILE_SCAN_LOW_CONFIDENCE: ['这版 QQ 的结构和已知锚点对不上', '扫描器发现自己复原的偏移互相矛盾（落点不在代码段、或多字段指向同一处），判定为低置信度，没有写入任何补丁、也没有碰 QQ。',
     '先按受支持版本使用；把判定码与 QQ 版本号反馈后加进适配矩阵，不靠猜偏移硬打补丁。'],
   PROFILE_SCAN_MISMATCH: ['QQ 文件在扫描前后不一致', '扫描到的 wrapper.node 与进程清单里的哈希对不上，多半是 QQ 正在自动更新。',
@@ -189,9 +191,20 @@ export function diagnoseQQ({
       const adopt = connection?.serviceAdopt || {};
       if (adopt.lastCode === 'SERVICE_OBJECT_MISSING') {
         // 扫过内存也没有可接管的 service 对象：这台机器的 QQ 根本没建过消息服务，重连解决不了。
+        const row = (rows || []).find((item) => item.pid === connection?.pid);
+        const startedMs = row?.startedAt ? Date.parse(row.startedAt) : NaN;
+        const ageMinutes = Number.isFinite(startedMs) ? Math.max(0, Math.round((Date.now() - startedMs) / 60000)) : null;
+        const scanned = adopt.attempts ?? 0;
+        const scanNote = '扫描 ' + scanned + ' 次、命中 ' + (adopt.found ?? 0) + ' 次' + (adopt.lastMillis ? '，每次约 ' + adopt.lastMillis + ' ms' : '');
+        // 第二遍扫描（间隔 45 秒）仍然是 0 命中，就说明对象不是「丢了」而是「从没建过」，这是另一类故障。
+        if (adopt.neverCreatedAt || scanned >= 2) {
+          return { ...base, code: 'SERVICE_NEVER_CREATED', title: 'QQ 启动后没有创建消息服务对象',
+            detail: (ageMinutes === null ? 'QQ 启动后' : `QQ 启动至今 ${ageMinutes} 分钟`) + '一直没有消息服务对象：账号读得到，服务对象扫不到（' + scanNote + '）。重连、重启 Alcor 都不会改变这一点。',
+            hint: '三条处置：① 点「重启 QQ 后重试」，完全退出 QQ 重新登录，登录后先在 QQ 里自己收发一条消息，再回来连接；② 跑一次「采集证据」，把 zip 发回作者（里面有服务对象扫描与 TLS 结果）；③ 现在就用「改用 OneBot 接入」把收发跑起来。' };
+        }
         return { ...base, code: 'IDENTITY_SERVICE_UNBOUND', title: 'QQ 已连上，但消息收发还不能用',
-          detail: `注入成功、账号也读到了，但 QQ 进程里没有可接管的消息服务对象（已自动扫描 ${adopt.attempts ?? 0} 次，命中 ${adopt.found ?? 0} 次）。`,
-          hint: '点本卡片上的「改用 OneBot 接入」，让 Alcor 走本机 OneBot 服务收发。这台机器的 QQ 没有暴露消息服务，反复重连不会有变化。' };
+          detail: `注入成功、账号也读到了，但 QQ 进程里暂时没有可接管的消息服务对象（serviceBound=false，${scanNote}）。`,
+          hint: 'Alcor 每 45 秒会再扫一次；仍然一样就点本卡片上的「改用 OneBot 接入」，让 Alcor 走本机 OneBot 服务收发。' };
       }
       return { ...base, code: 'IDENTITY_SERVICE_UNBOUND', title: 'QQ 已连上，但消息收发还不能用',
         detail: '宿主已经在 QQ 进程里、账号也读到了，但这次注入没有拿到 QQ 的消息服务对象（serviceBound=false）：能确认登录，收发消息不会生效。',

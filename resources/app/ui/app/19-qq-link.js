@@ -52,6 +52,7 @@
     IDENTITY_CALL_FAILED: '取账号调用失败',
     IDENTITY_UNREADABLE: '这版 QQ 账号读不到',
     IDENTITY_SERVICE_UNBOUND: '已连上但收发不可用',
+  SERVICE_NEVER_CREATED: 'QQ 未创建消息服务对象',
     PROFILE_SCAN_LOW_CONFIDENCE: '这版 QQ 结构对不上锚点',
     POLICY_HVCI_ON: '内存完整性开着',
     POLICY_SAC_ENFORCING: '应用控制强制',
@@ -119,7 +120,7 @@
         ${canConnect ? '<button class="btn btn-small" data-qq="connect">只连接这一个</button>' : ''}
         ${showNative ? '<button class="btn btn-small" data-qq="restart">重启 QQ 后重试</button>' : ''}
         <button class="btn btn-small" data-qq="rescan">重新检测</button>
-        ${v.code === 'IDENTITY_SERVICE_UNBOUND' && !(v.policy && v.policy.ok) ? '<button class="btn btn-small" data-policy="onebot">改用 OneBot 接入</button>' : ''}
+        ${(v.code === 'IDENTITY_SERVICE_UNBOUND' || v.code === 'SERVICE_NEVER_CREATED') ? '<button class="btn btn-small" data-policy="onebot">改用 OneBot 接入</button>' : ''}
         <span class="qq-note">排查程序（安装目录）：「控制台无法连接，显示被占用点这个，对照最后一行判定码.cmd」</span>
       </div>
       <div class="qq-switch"></div>

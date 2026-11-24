@@ -40,6 +40,31 @@ export function connection(data) {
 }
 const integer = n => Number.isSafeInteger(n) && n >= 0 ? n : null;
 const bool = b => typeof b === 'boolean' ? b : null;
+const utc = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) &&
+  Number.isFinite(Date.parse(value)) ? value : null;
+const counters = ['cyclesStarted','cyclesCompleted','inputs','unrecognized','parseErrors','duplicates',
+  'staleMessages','metadataErrors','metadataTimeouts','messagesPublished','idleTimeouts'];
+const knownErrors = new Set(['NATIVE_RECEIVE_CONNECTION_LOST','NATIVE_PUSH_PARSE_FAILED','NATIVE_NOTICE_PARSE_FAILED',
+  'NATIVE_NOTICE_RESOLVE_FAILED','NATIVE_RECEIVE_NOT_READY']);
+function progress(value) {
+  if (!value || typeof value.instance !== 'string' || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(value.instance) ||
+      integer(value.session) === null || counters.some(k => integer(value[k]) === null)) return null;
+  return {instance:value.instance, session:value.session, ...Object.fromEntries(counters.map(k => [k,value[k]])),
+    lastStartedAt:utc(value.lastStartedAt), lastFinishedAt:utc(value.lastFinishedAt),
+    pendingSession:integer(value.pendingSession), pendingMs:integer(value.pendingMs)};
+}
+export function receiveWindow(samples) {
+  if (samples.length < 2 || samples.some(s => s.status !== 'ok' || !s.receiveProgress)) return null;
+  const rows = samples.map(s => s.receiveProgress), first = rows[0], last = rows.at(-1);
+  for (let i=1; i<rows.length; i++) {
+    const row=rows[i];
+    if (row.instance !== first.instance || row.session !== first.session ||
+        counters.some(k => row[k] < rows[i-1][k])) return null;
+  }
+  return {...Object.fromEntries(counters.map(k => [k,last[k]-first[k]])),
+    sameCyclePending:rows.every(p => p.pendingMs !== null && p.cyclesStarted === first.cyclesStarted &&
+      p.cyclesCompleted === first.cyclesCompleted && p.pendingSession === first.pendingSession)};
+}
 export function health(config) {
   const at = new Date().toISOString();
   if (!config) return Promise.resolve({at, status:'config-unavailable'});
@@ -64,7 +89,9 @@ export function health(config) {
             if (h.name !== 'Alcor' || typeof h.version !== 'string' || !/^\d+\.\d+\.\d+(?:[-+.][a-zA-Z0-9.-]{1,20})?$/.test(h.version)) throw Error();
             const b = h.backend || {};
             finish({status:'ok', version:h.version, ready:bool(h.ready), connected:bool(b.connected),
-              serviceBound:bool(b.serviceBound), events:integer(b.events), uptimeSeconds:integer(h.uptimeSeconds)});
+              serviceBound:bool(b.serviceBound), events:integer(b.events), uptimeSeconds:integer(h.uptimeSeconds),
+              lastReceivedAt:utc(b.lastReceivedAt), lastError:knownErrors.has(b.lastError) ? b.lastError : null,
+              receiveProgress:progress(b.receiveProgress)});
           } catch { finish({status:'invalid-response'}); }
         });
       });
@@ -75,6 +102,7 @@ export function health(config) {
 }
 export function eventDelta(samples) {
   if (samples.length < 2 || samples.some(s => s.status !== 'ok' || !Number.isSafeInteger(s.events) || !Number.isSafeInteger(s.uptimeSeconds))) return null;
+  if (samples.some(s => s.receiveProgress) && !receiveWindow(samples)) return null;
   const first = samples[0];
   const boot = s => Date.parse(s.at) - s.uptimeSeconds * 1000;
   for (let i = 1; i < samples.length; i++) {
@@ -150,8 +178,8 @@ async function main(args) {
     await delay(Math.min(5000, end - Date.now()));
     samples.push(await health(config));
   }
-  const report = {schema:1, started:new Date(started).toISOString(), ended:new Date().toISOString(),
-    marks, samples, eventDelta:eventDelta(samples), matches:evidence(data,marks,started)};
+  const report = {schema:2, started:new Date(started).toISOString(), ended:new Date().toISOString(),
+    marks, samples, eventDelta:eventDelta(samples), receiveWindow:receiveWindow(samples), matches:evidence(data,marks,started)};
   target = path.resolve(target || path.join(os.tmpdir(),'Alcor-field-'+id+'.json'));
   plainPath(path.dirname(target));
   fs.writeFileSync(target, JSON.stringify(report,null,2)+'\n',{flag:'wx',encoding:'utf8'});

@@ -11,7 +11,7 @@ $selfAdmin=(New-Object Security.Principal.WindowsPrincipal($self)).IsInRole([Sec
 $mp=Get-MpComputerStatus -ErrorAction SilentlyContinue
 $pref=Get-MpPreference -ErrorAction SilentlyContinue
 $av=@()
-Get-CimInstance -Namespace root\SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue | ForEach-Object { $av += [ordered]@{ name=$_.displayName; state=$_.productState } }
+Get-CimInstance -Namespace root\SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue | ForEach-Object { $exe=[string]$_.pathToSignedProductExe; $isPath=($exe -match '^[A-Za-z]:\\' -or $exe -match '^\\\\'); $av += [ordered]@{ name=$_.displayName; state=$_.productState; exe=$exe; present=$(if($isPath){[bool](Test-Path -LiteralPath $exe)}else{$null}) } }
 $dg=(Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue)
 $out=[ordered]@{
   self=[ordered]@{ user=$self.Name; sessionId=(Get-Process -Id $PID).SessionId; elevated=[bool]$selfAdmin }
@@ -86,6 +86,7 @@ const FINDING_TEXT = {
   POLICY_AV_QUARANTINE: { level: 'block', title: '安全软件处置过 Alcor 的组件', detail: 'Defender 事件 1116/1117 里出现 Alcor 的文件名，说明检测或处置命中过它。', remedy: '核对文件 SHA-256 与发布包一致后，把安装目录加入排除项再修复安装' },
   POLICY_ARTIFACT_HASH_MISMATCH: { level: 'block', title: '本机宿主组件与发布包不一致', detail: '注入器或宿主 DLL 的 SHA-256 对不上，可能被替换、截断或隔离后留有残件。', remedy: '用同一版本安装包覆盖安装一次，再重试连接' },
   POLICY_EVIDENCE_UNCONFIRMED: { level: 'info', title: '防护策略只是环境提示，尚未确认是它拦住了注入', detail: '当前没有任何与 Alcor 文件对应的系统处置记录。反馈问题时请一起提供：失败时间、界面上的判定码与阶段、同时间的 CodeIntegrity 3077 或 Defender 1116/1117 记录。' },
+  POLICY_AV_STALE_REGISTRATION: { level: 'info', title: '系统里有已卸载杀毒软件的残留登记', detail: '安全中心的产品列表会保留卸载后的条目，状态字段也不更新。只有登记路径仍然存在的产品才算当前安装。' },
   POLICY_ONEBOT_FALLBACK: { level: 'info', title: '注入被拦时可改用 OneBot', detail: 'Alcor 支持标准 OneBot 接入，不依赖进程注入；原生注入失败时不会无路可走。' }
 };
 
@@ -107,6 +108,19 @@ function asFlag(value) {
   if (text === 'ON' || text === 'TRUE' || text === '1') return true;
   if (text === 'OFF' || text === 'FALSE' || text === '0') return false;
   return null;
+}
+
+/* Security Center 的产品登记在卸载后不会立刻消失（实测用户机上留着一条已卸载产品的登记），
+   productState 也只描述历史状态。present=false 说明登记的路径已经不存在，只能当历史记录看。 */
+function readAntivirusRow(row) {
+  const item = normalizeBroken(row);
+  const exe = String(item.exe || '');
+  const state = Number(item.state);
+  const stateKnown = Number.isFinite(state);
+  const present = typeof item.present === 'boolean' ? item.present : null;
+  const running = stateKnown ? ((state >> 8) & 0xff) === 0x10 : null;
+  return { name: String(item.name || ''), state: stateKnown ? state : null, exe, present,
+    active: present === true && running === true, stale: present === false };
 }
 
 export function parsePolicyReport(raw) {
@@ -134,7 +148,7 @@ export function parsePolicyReport(raw) {
       exclusions: toList(machine.exclusions).map(String),
       asrIds: toList(machine.asrIds).map(String),
       asrActions: toList(machine.asrActions).map(Number),
-      antivirus: toList(machine.antivirus).map((row) => normalizeBroken(row))
+      antivirus: toList(machine.antivirus).map(readAntivirusRow)
     },
     process: proc ? {
       pid: Number(proc.pid) || 0,
@@ -179,6 +193,9 @@ export function evaluatePolicy(report, options = {}) {
   if (machine.hvci === true || machine.deviceGuardRunning?.includes(2)) push('POLICY_HVCI_ON');
   if (machine.sac === 1) push('POLICY_SAC_ENFORCING');
   else if (machine.sac === 2) push('POLICY_SAC_EVALUATION');
+
+  const staleAv = (machine.antivirus || []).filter((row) => row.stale);
+  if (staleAv.length) push('POLICY_AV_STALE_REGISTRATION', { detail: '系统登记里这些产品已经不存在：' + staleAv.map((row) => row.name || '未知产品').join('、') + '。它们只是卸载后的残留条目，不代表当前装有该软件。' });
 
   const defenderOn = machine.defender?.realtime === true;
   if (defenderOn) {

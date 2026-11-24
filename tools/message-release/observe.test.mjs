@@ -82,3 +82,33 @@ test('命令行现场快照可离线运行，自定义报告不能覆盖既有�
   assert.match(r.marks.inbound,/^Alcor-IN-[0-9A-F]{16}$/);assert.equal(run().status,1);
   assert.equal(fs.readFileSync(file,'utf8'),before);assert.ok(!before.includes(dir));
 });
+test('现场报告只导出接收阶段计数和许可的错误码',async t=>{
+  const tally={cyclesStarted:2,cyclesCompleted:1,inputs:1,unrecognized:0,parseErrors:0,duplicates:0,
+    staleMessages:0,metadataErrors:0,metadataTimeouts:0,messagesPublished:0,idleTimeouts:1};
+  const at='2026-11-24T00:00:00.000Z';
+  const cfg=await server(t,(_req,res)=>res.end(JSON.stringify({name:'Alcor',version:'0.4.1',backend:{
+    lastError:'NATIVE_PUSH_PARSE_FAILED',lastReceivedAt:at,receiveProgress:{...tally,
+      instance:'00000000-0000-4000-8000-000000000001',session:2,lastStartedAt:at,lastFinishedAt:at,
+      pendingSession:2,pendingMs:5000,privateText:'hidden-value'}}})));
+  const h=await health(cfg);
+  assert.equal(h.receiveProgress?.inputs,1);assert.equal(h.receiveProgress.pendingMs,5000);
+  assert.equal(h.lastError,'NATIVE_PUSH_PARSE_FAILED');assert.equal(h.lastReceivedAt,at);
+  assert.doesNotMatch(JSON.stringify(h),/hidden-value/);
+});
+test('早期核心或换实例、换会话时不推算接收轮次',async()=>{
+  const {receiveWindow}=await import('./observe.mjs');
+  assert.equal(typeof receiveWindow,'function');
+  const t={cyclesStarted:3,cyclesCompleted:2,inputs:0,unrecognized:0,parseErrors:0,duplicates:0,staleMessages:0,
+    metadataErrors:0,metadataTimeouts:0,messagesPublished:0,idleTimeouts:0,
+    instance:'00000000-0000-4000-8000-000000000001',session:1,lastStartedAt:'2026-11-24T00:00:00.000Z',
+    lastFinishedAt:null,pendingSession:1,pendingMs:100};
+  const sample=p=>({status:'ok',receiveProgress:p});
+  const window=(p,q)=>receiveWindow([sample(p),sample(q)]);
+  assert.equal(window(t,{...t,pendingMs:1000}).sameCyclePending,true);
+  assert.equal(window(t,{...t,pendingMs:null,pendingSession:null,cyclesCompleted:3}).cyclesCompleted,1);
+  assert.equal(window(t,{...t,session:2}),null);
+  assert.equal(window(t,{...t,instance:'00000000-0000-4000-8000-000000000002'}),null);
+  assert.equal(window(t,{...t,cyclesCompleted:1}),null);
+  assert.equal(receiveWindow([sample(t),{status:'unavailable'},sample(t)]),null);
+  assert.equal(receiveWindow([sample(null),sample(null)]),null);
+});

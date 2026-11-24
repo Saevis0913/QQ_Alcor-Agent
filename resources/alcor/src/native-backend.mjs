@@ -4,6 +4,7 @@ import {prepareVideo} from '../native-core/video-upload.mjs';
 import {planMixedImageMessage} from '../native-core/mixed-image-message.mjs';
 import {sendProfileLike} from '../native-core/profile-like.mjs';
 import {randomBytes} from 'node:crypto';
+import {ReceiveProgress,publishDecodedMessage} from './received-message.mjs';
 import {NativeController} from '../native-core/controller.mjs';
 import {encodePrivateText,decodePrivateSendResponse} from '../native-core/private-text.mjs';
 import {BridgeError} from './backend.mjs';
@@ -27,7 +28,7 @@ export const NATIVE_ACTIONS=Object.freeze([
 ]);
 const supportedActions=new Set(NATIVE_ACTIONS);
 export class NativeBackend{
-  constructor(config,{controller=new NativeController(),mediaFile}={}){this.config=config;this.controller=controller;this.mediaFile=mediaFile;this.events=0;this.receiving=false;this.confirmed=false;this.receiveGeneration=0;this.messages=new Map();this.media=loadMediaCache(mediaFile);this.seen=new Set();this.messageCounter=randomBytes(4).readUInt32LE()&0x3fffffff;this.lastReceivedAt=null;this.lastError=null;this.directory=new NativeDirectory(this);this.controller.onServiceBound=()=>this.resumeReceiving().catch(()=>{});}
+  constructor(config,{controller=new NativeController(),mediaFile}={}){this.config=config;this.controller=controller;this.mediaFile=mediaFile;this.events=0;this.receiving=false;this.confirmed=false;this.receiveGeneration=0;this.messages=new Map();this.receiveProgress=new ReceiveProgress();this.media=loadMediaCache(mediaFile);this.seen=new Set();this.messageCounter=randomBytes(4).readUInt32LE()&0x3fffffff;this.lastReceivedAt=null;this.lastError=null;this.directory=new NativeDirectory(this);this.controller.onServiceBound=()=>this.resumeReceiving().catch(()=>{});}
   beginReceiving(){clearInterval(this.timer);this.receiving=true;this.lastError=null;this.timer=setInterval(()=>this.poll().catch(()=>{}),350);this.timer.unref();}
   async resumeReceiving(){
     // 心跳接管到消息服务后由控制器回调：这时才真正开始收消息，不重启会话。
@@ -38,7 +39,7 @@ export class NativeBackend{
     this.beginReceiving();this.recordRecovery();
   }
   start(onEvent){this.onEvent=onEvent;this.metaTimer=setInterval(()=>{if(this.receiving&&this.controller.snapshot().connected)this.onEvent?.({time:Math.floor(Date.now()/1000),self_id:Number(this.account),post_type:'meta_event',meta_event_type:'heartbeat',status:{online:this.snapshot().qqOnline,good:this.snapshot().qqOnline},interval:15000});},15000);this.metaTimer.unref();}
-  snapshot(){const s=this.controller.snapshot();return {...s,type:'native',http:s.connected?'reachable':'idle',ws:this.receiving&&s.connected?'open':'unavailable',qqOnline:!!(s.connected&&this.receiving&&this.confirmed),receiveReady:!!(s.connected&&this.receiving&&s.serviceBound!==false),deliveryMode:s.serviceBound===false?'identity-only':'native',events:this.events,reconnects:this.recoveries??0,lastReceivedAt:this.lastReceivedAt,lastError:s.lastError??this.lastError,capabilityScope:'private-group-text-and-media-receive',onlineBasis:'local identity plus observed send/receive confirmation'};}
+  snapshot(){const s=this.controller.snapshot();return {...s,type:'native',http:s.connected?'reachable':'idle',ws:this.receiving&&s.connected?'open':'unavailable',qqOnline:!!(s.connected&&this.receiving&&this.confirmed),receiveReady:!!(s.connected&&this.receiving&&s.serviceBound!==false),deliveryMode:s.serviceBound===false?'identity-only':'native',events:this.events,receiveProgress:this.receiveProgress.snapshot(this.receiveGeneration),reconnects:this.recoveries??0,lastReceivedAt:this.lastReceivedAt,lastError:s.lastError??this.lastError,capabilityScope:'private-group-text-and-media-receive',onlineBasis:'local identity plus observed send/receive confirmation'};}
   recordRecovery(){this.recoveries=(this.recoveries??0)+1;}
   stopReceiving(){clearInterval(this.timer);this.receiving=false;this.confirmed=false;this.receiveGeneration++;this.messages.clear();}
   connect(pid,expected={}){
@@ -66,11 +67,15 @@ export class NativeBackend{
     }catch(error){this.stopReceiving();try{await this.controller.disconnect();}catch{}throw error;}
   }
   async poll(){
-    if(this.polling||!this.receiving)return;this.polling=true;const generation=this.receiveGeneration;
-    try{for(let i=0;i<32&&this.receiving;i++){
+    // 每一轮都留一条可读的接收证据（开始/完成/输入/发布数），现场分得清「没数据」和「卡住不返回」。
+    if(this.polling||!this.receiving)return;
+    const generation=this.receiveGeneration;this.polling=true;this.receiveProgress.start(generation);const held=true;
+    try{
+    for(let i=0;i<32&&this.receiving;i++){
       const packet=await this.controller.request('poll');if(generation!==this.receiveGeneration||!this.receiving)return;if(packet.status!==0)throw new Error('NATIVE_RECEIVE_FAILED');this.dropped=packet.dropped;
       if(!packet.payload?.length)break;
-      let notices;try{notices=decodeNoticePush(packet.payload,this.account);}catch{this.lastError='NATIVE_NOTICE_PARSE_FAILED';continue;}
+      this.receiveProgress.totals.inputs++;
+      let notices;try{notices=decodeNoticePush(packet.payload,this.account);}catch{this.receiveProgress.totals.parseErrors++;this.lastError='NATIVE_NOTICE_PARSE_FAILED';continue;}
       if(notices!==null){
         for(const notice of notices){
           const key='notice:'+notice[NOTICE_SOURCE].key;if(this.seen.has(key))continue;
@@ -81,12 +86,12 @@ export class NativeBackend{
         }
         continue;
       }
-      let event;try{event=decodeMessagePush(packet.payload,this.account);}catch{this.lastError='NATIVE_PUSH_PARSE_FAILED';continue;}
-      if(!event)continue;const key=event.self_id+':'+(event.group_id||'private')+':'+event.user_id+':'+event.sequence+':'+event.time;if(this.seen.has(key))continue;this.seen.add(key);if(this.seen.size>2048)this.seen.delete(this.seen.values().next().value);
-      await Promise.race([this.directory.enrich(event),new Promise(resolve=>{const timeout=setTimeout(resolve,1500);timeout.unref();})]);if(generation!==this.receiveGeneration||!this.receiving)return;
-      event.message_id=this.messageCounter++;this.rememberMedia(event);this.messages.set(event.message_id,event);if(this.messages.size>1000)this.messages.delete(this.messages.keys().next().value);
-      this.confirmed=true;this.events++;this.lastReceivedAt=new Date().toISOString();this.onEvent?.(event);
-    }}catch(error){if(error?.message==='HOST_QUEUE_TIMEOUT')return;if(generation===this.receiveGeneration){this.lastError='NATIVE_RECEIVE_CONNECTION_LOST';this.stopReceiving();try{await this.controller.disconnect();}catch{}}}finally{this.polling=false;}
+      let event;try{event=decodeMessagePush(packet.payload,this.account);}catch{this.receiveProgress.totals.parseErrors++;this.lastError='NATIVE_PUSH_PARSE_FAILED';continue;}
+      if(!event){this.receiveProgress.totals.unrecognized++;continue;}
+      // 普通私聊（没有群目录字段）在当前会话的这一轮里立刻发布，不等元数据；重复到达只保留一条。
+      await publishDecodedMessage(this,event,generation);
+      if(generation!==this.receiveGeneration||!this.receiving)return;
+    }}catch(error){if(error?.message==='HOST_QUEUE_TIMEOUT'){this.receiveProgress.totals.idleTimeouts++;return;}if(generation===this.receiveGeneration){this.lastError='NATIVE_RECEIVE_CONNECTION_LOST';this.stopReceiving();try{await this.controller.disconnect();}catch{}}}finally{if(held)this.polling=false;this.receiveProgress.finish();}
   }
   async disconnect(){this.stopReceiving();await this.controller.disconnect();}
   rememberMedia(event){

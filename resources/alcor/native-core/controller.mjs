@@ -134,9 +134,9 @@ export class NativeController {
     this.inventory=inventory;this.loader=loader;this.query=query;this.adopt=adopt;this.heartbeatMs=heartbeatMs;
     this.owner=null;this.ownerGeneration=0;this.pending=null;this.disconnecting=null;this.tail=Promise.resolve();this.lastError=null;this.lastFailure=null;this.closed=false;
     this.rebind={attempts:0,lastAt:null,lastStatus:null,upgradedAt:null};
-    this.service={attempts:0,lastAt:0,found:0,lastCode:null,lastObject:null};this.onServiceBound=null;
+    this.service={attempts:0,lastAt:0,found:0,lastCode:null,lastObject:null,lastHits:null,lastScanAt:null,lastMillis:null,neverCreatedAt:null};this.onServiceBound=null;
   }
-  snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,identitySource:this.owner?.identitySource??null,serviceBound:this.owner?this.owner.serviceBound===true:null,rebindAttempts:this.rebind.attempts,reboundAt:this.rebind.upgradedAt,serviceAdopt:{attempts:this.service.attempts,found:this.service.found,lastCode:this.service.lastCode,lastObject:this.service.lastObject},lastError:this.lastError,lastFailure:this.lastFailure};}
+  snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,identitySource:this.owner?.identitySource??null,serviceBound:this.owner?this.owner.serviceBound===true:null,rebindAttempts:this.rebind.attempts,reboundAt:this.rebind.upgradedAt,serviceAdopt:{attempts:this.service.attempts,found:this.service.found,lastCode:this.service.lastCode,lastObject:this.service.lastObject,lastHits:this.service.lastHits,lastMillis:this.service.lastMillis,neverCreatedAt:this.service.neverCreatedAt},lastError:this.lastError,lastFailure:this.lastFailure};}
   enqueue(fn){const next=this.tail.then(fn);this.tail=next.catch(()=>{});return next;}
   resumeSelection(){
     const owner=this.owner;
@@ -275,7 +275,12 @@ export class NativeController {
       result=await this.adopt({pid:owner.pid,vtableRva:Number(rvas.service_vtable),globalRva:Number(rvas.service_global),controlRva:Number(rvas.service_global)+8});
     }catch{result={ok:false,code:'SERVICE_ADOPT_FAILED'};}
     this.service.lastCode=result?.code??(result?.ok?'SERVICE_ADOPTED':null);
+    this.service.lastHits=typeof result?.report?.hits==='number'?result.report.hits:null;
+    this.service.lastMillis=typeof result?.report?.millis==='number'?result.report.millis:null;
+    this.service.lastScanAt=new Date().toISOString();
     if(result?.ok){this.service.found++;this.service.lastObject=result.report?.object??null;return true;}
+    // 扫完一遍仍然 0 命中：对象不是「丢了」，是这台机器的 QQ 从来没建过。记下首扫时间，诊断据此给不同结论。
+    if(this.service.lastCode==='SERVICE_OBJECT_MISSING'&&!this.service.neverCreatedAt)this.service.neverCreatedAt=this.service.lastScanAt;
     return false;
   }
   async stopOwned(){

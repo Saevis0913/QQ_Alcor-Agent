@@ -14,6 +14,10 @@ const script=String.raw`
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$cim=@{}
+Get-CimInstance Win32_Process -Filter "Name='QQ.exe'" -ErrorAction SilentlyContinue | ForEach-Object { $cim[[int]$_.ProcessId]=$_ }
+$disks=@{}
+Get-CimInstance Win32_LogicalDisk -ErrorAction SilentlyContinue | ForEach-Object { $disks[[string]$_.DeviceID]=[int]$_.DriveType }
 $rows=@(Get-Process QQ -ErrorAction SilentlyContinue | ForEach-Object {
   $p=$_; $module=$null
   try {
@@ -24,7 +28,7 @@ $rows=@(Get-Process QQ -ErrorAction SilentlyContinue | ForEach-Object {
       $started=$p.StartTime.ToUniversalTime()
       $names=New-Object System.Collections.ArrayList
       try { foreach($m in @($p.Modules)) { $name=[IO.Path]::GetFileName([string]$m.FileName); if($name -and -not $names.Contains($name)){[void]$names.Add($name)} } } catch {}
-      [pscustomobject]@{pid=$p.Id;path=$p.Path;moduleName=$module.ModuleName;modulePath=$module.FileName;sha256=$digest;version=$module.FileVersionInfo.FileVersion;startedAt=$started.ToString('o');creationTime=$started.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture);modules=@($names | Select-Object -First 512)}
+      [pscustomobject]@{pid=$p.Id;path=$p.Path;moduleName=$module.ModuleName;modulePath=$module.FileName;sha256=$digest;version=$module.FileVersionInfo.FileVersion;startedAt=$started.ToString('o');creationTime=$started.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture);modules=@($names | Select-Object -First 512);commandLine=([string]$cim[[int]$p.Id].CommandLine).Substring(0,[Math]::Min(400,([string]$cim[[int]$p.Id].CommandLine).Length));parentPid=[int]$cim[[int]$p.Id].ParentProcessId;installDrive=$(if(([string]$module.FileName) -match '^([A-Za-z]):'){$matches[1].ToUpper()+':'}else{$null});driveType=$(if(([string]$module.FileName) -match '^([A-Za-z]):'){$disks[($matches[1].ToUpper()+':')]}else{$null})}
     }
   } catch { [pscustomobject]@{pid=$p.Id;reason='PROCESS_INSPECTION_UNAVAILABLE'} }
 })
