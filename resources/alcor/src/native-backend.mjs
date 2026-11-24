@@ -14,11 +14,13 @@ import {encodePrivateFileDownload,decodePrivateFileDownload} from '../native-cor
 import {encodeGroupText,encodeGroupElements,decodeGroupSendResponse} from '../native-core/group-text.mjs';
 import {NativeDirectory} from '../native-core/directory-cache.mjs';
 import {REPLY_SOURCE,encodeMentionElement,encodePrivateElements,encodeReplyElement,encodeTextElement} from '../native-core/outgoing-segments.mjs';
-import {MEDIA_DESCRIPTOR,encodeMediaDownload,decodeMediaDownload} from '../native-core/media.mjs';
+import {MEDIA_DESCRIPTOR,encodeMediaDownload,decodeMediaDownload,fields as pushFields,child as pushChild,number as pushNumber} from '../native-core/media.mjs';
 import {loadMediaCache,saveMediaCache} from '../native-core/media-cache.mjs';
 import {readForward,sendPoke} from '../native-core/message-actions.mjs';
 import {encodeReceivedSticker} from '../native-core/received-sticker.mjs';
 import {recallMessage,rememberSent} from '../native-core/message-recall.mjs';
+/** Element type of a push the decoder declined, or null when the payload is not readable. Nothing but the small integer leaves this function. */
+export function pushInputType(payload){try{return pushNumber(pushChild(pushChild(pushFields(payload),1),2),1)||null;}catch{return null;}}
 const ok=data=>({status:'ok',retcode:0,data});
 export const NATIVE_ACTIONS=Object.freeze([
   'get_status','get_login_info','get_version_info','get_msg','send_private_msg','send_group_msg','send_msg',
@@ -28,7 +30,7 @@ export const NATIVE_ACTIONS=Object.freeze([
 ]);
 const supportedActions=new Set(NATIVE_ACTIONS);
 export class NativeBackend{
-  constructor(config,{controller=new NativeController(),mediaFile}={}){this.config=config;this.controller=controller;this.mediaFile=mediaFile;this.events=0;this.receiving=false;this.confirmed=false;this.receiveGeneration=0;this.messages=new Map();this.receiveProgress=new ReceiveProgress();this.media=loadMediaCache(mediaFile);this.seen=new Set();this.messageCounter=randomBytes(4).readUInt32LE()&0x3fffffff;this.lastReceivedAt=null;this.lastError=null;this.directory=new NativeDirectory(this);this.controller.onServiceBound=()=>this.resumeReceiving().catch(()=>{});}
+  constructor(config,{controller=new NativeController(),mediaFile}={}){this.config=config;this.controller=controller;this.mediaFile=mediaFile;this.events=0;this.receiving=false;this.confirmed=false;this.receiveGeneration=0;this.messages=new Map();this.receiveProgress=new ReceiveProgress();this.lastUnrecognized=null;this.media=loadMediaCache(mediaFile);this.seen=new Set();this.messageCounter=randomBytes(4).readUInt32LE()&0x3fffffff;this.lastReceivedAt=null;this.lastError=null;this.directory=new NativeDirectory(this);this.controller.onServiceBound=()=>this.resumeReceiving().catch(()=>{});}
   beginReceiving(){clearInterval(this.timer);this.receiving=true;this.lastError=null;this.timer=setInterval(()=>this.poll().catch(()=>{}),350);this.timer.unref();}
   async resumeReceiving(){
     // 心跳接管到消息服务后由控制器回调：这时才真正开始收消息，不重启会话。
@@ -39,7 +41,7 @@ export class NativeBackend{
     this.beginReceiving();this.recordRecovery();
   }
   start(onEvent){this.onEvent=onEvent;this.metaTimer=setInterval(()=>{if(this.receiving&&this.controller.snapshot().connected)this.onEvent?.({time:Math.floor(Date.now()/1000),self_id:Number(this.account),post_type:'meta_event',meta_event_type:'heartbeat',status:{online:this.snapshot().qqOnline,good:this.snapshot().qqOnline},interval:15000});},15000);this.metaTimer.unref();}
-  snapshot(){const s=this.controller.snapshot();return {...s,type:'native',http:s.connected?'reachable':'idle',ws:this.receiving&&s.connected?'open':'unavailable',qqOnline:!!(s.connected&&this.receiving&&this.confirmed),receiveReady:!!(s.connected&&this.receiving&&s.serviceBound!==false),deliveryMode:s.serviceBound===false?'identity-only':'native',events:this.events,receiveProgress:this.receiveProgress.snapshot(this.receiveGeneration),reconnects:this.recoveries??0,lastReceivedAt:this.lastReceivedAt,lastError:s.lastError??this.lastError,capabilityScope:'private-group-text-and-media-receive',onlineBasis:'local identity plus observed send/receive confirmation'};}
+  snapshot(){const s=this.controller.snapshot();return {...s,type:'native',http:s.connected?'reachable':'idle',ws:this.receiving&&s.connected?'open':'unavailable',qqOnline:!!(s.connected&&this.receiving&&this.confirmed),receiveReady:!!(s.connected&&this.receiving&&s.serviceBound!==false),deliveryMode:s.serviceBound===false?'identity-only':'native',events:this.events,receiveProgress:{...this.receiveProgress.snapshot(this.receiveGeneration),lastUnrecognized:this.lastUnrecognized},reconnects:this.recoveries??0,lastReceivedAt:this.lastReceivedAt,lastError:s.lastError??this.lastError,capabilityScope:'private-group-text-and-media-receive',onlineBasis:'local identity plus observed send/receive confirmation'};}
   recordRecovery(){this.recoveries=(this.recoveries??0)+1;}
   stopReceiving(){clearInterval(this.timer);this.receiving=false;this.confirmed=false;this.receiveGeneration++;this.messages.clear();}
   connect(pid,expected={}){
@@ -87,7 +89,7 @@ export class NativeBackend{
         continue;
       }
       let event;try{event=decodeMessagePush(packet.payload,this.account);}catch{this.receiveProgress.totals.parseErrors++;this.lastError='NATIVE_PUSH_PARSE_FAILED';continue;}
-      if(!event){this.receiveProgress.totals.unrecognized++;continue;}
+      if(!event){this.receiveProgress.totals.unrecognized++;this.lastUnrecognized={bytes:packet.payload.length,type:pushInputType(packet.payload),at:new Date().toISOString()};continue;}
       // 普通私聊（没有群目录字段）在当前会话的这一轮里立刻发布，不等元数据；重复到达只保留一条。
       await publishDecodedMessage(this,event,generation);
       if(generation!==this.receiveGeneration||!this.receiving)return;

@@ -220,8 +220,13 @@ export function diagnoseQQ({
         detail: '核心报告账号在线，事件通道已连接。' + memoryNote, hint: '' };
     }
     const title = connection?.serviceBound === false ? 'QQ 消息服务绑定待确认' : 'QQ 宿主已连接，消息通道待确认';
+    // 入站到过但没发布，要把「到了什么」写出来：自发的回执（528/732）与真没解出来的私聊，处理方式完全不同。
+    const progress = connection?.receiveProgress;
+    const inputNote = progress?.inputs > 0
+      ? `已收到 ${progress.inputs} 条入站数据，发布 ${progress.messagesPublished ?? 0} 条；最近一条未发布类型 ${progress.lastUnrecognized?.type ?? '未知'}。`
+      : '';
     return { ...base, code: 'RECEIVE_NOT_READY', title: [title, account].filter(Boolean).join(' · '),
-      detail: memoryNote + (connection?.serviceBound === false ? '建立连接时未确认消息服务绑定。' : '') + '当前会话的消息收发尚未确认。',
+      detail: memoryNote + (connection?.serviceBound === false ? '建立连接时未确认消息服务绑定。' : '') + inputNote + '当前会话的消息收发尚未确认。',
       hint: '保存本次状态。在授权测试会话中分别核对入站事件和出站回执。发送结果未知时先核对接收端。' };
   }
   if (processScanError) {

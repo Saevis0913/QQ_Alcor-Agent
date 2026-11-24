@@ -540,3 +540,19 @@ test('surfaces a connected session whose message service is not bound', () => {
   assert.match(result.hint, /OneBot/);
   assert.match(result.detail, /serviceBound=false/);
 });
+
+test('inbound data that never published names the element type it carried', () => {
+  const progress = { inputs: 3, messagesPublished: 0, lastUnrecognized: { bytes: 216, type: 528 } };
+  const withInputs = diagnoseQQ({ running: true, backendReady: false,
+    connection: { connected: true, identitySource: 'memory', serviceBound: true, events: 0, receiveProgress: progress } });
+  assert.equal(withInputs.code, 'RECEIVE_NOT_READY');
+  assert.match(withInputs.detail, /已收到 3 条入站数据，发布 0 条/);
+  assert.match(withInputs.detail, /类型 528/);
+  const silent = diagnoseQQ({ running: true, backendReady: false,
+    connection: { connected: true, identitySource: 'memory', serviceBound: true, events: 0, receiveProgress: { inputs: 0, messagesPublished: 0 } } });
+  assert.doesNotMatch(silent.detail, /条入站数据/);
+  const unknown = diagnoseQQ({ running: true, backendReady: false,
+    connection: { connected: true, identitySource: 'memory', serviceBound: true, events: 0,
+      receiveProgress: { inputs: 1, messagesPublished: 0, lastUnrecognized: { bytes: 8, type: null } } } });
+  assert.match(unknown.detail, /类型 未知/);
+});
