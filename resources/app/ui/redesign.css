@@ -1973,6 +1973,20 @@ html[data-theme] .skill-card__ver {
   color: var(--tx3);
 }
 
+html[data-theme] .skill-card__tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--line2);
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 15px;
+  color: var(--tx3);
+  vertical-align: 1px;
+  cursor: help;
+}
+
 html[data-theme] .mcard-desc {
   margin-top: 3px;
   font-size: 11.5px;

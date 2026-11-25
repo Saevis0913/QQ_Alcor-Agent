@@ -6,6 +6,7 @@
   "category": "utility",
   "description": "按群统计近期句长、标点、句尾语气词和连续分条节奏。休息时间写入本群摘要，参考公开话题并复盘自己的应答。原有人设继续生效。",
   "enabledByDefault": true,
+  "builtin": true,
   "permissions": [
     "web_fetch"
   ],

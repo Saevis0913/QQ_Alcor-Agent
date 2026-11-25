@@ -6,6 +6,7 @@
   "category": "media",
   "description": "按关键词或角色检索梗鲸图鉴，通过 QQ 发送原图，并在同一会话中避免重发。",
   "enabledByDefault": true,
+  "builtin": true,
   "permissions": ["web_fetch"],
   "settings": { "allowContextualSend": true, "cooldownSeconds": 60 },
   "configSchema": {

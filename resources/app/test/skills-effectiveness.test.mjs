@@ -165,3 +165,47 @@ test('真实目录：内置技能与插件全部加载成功，且没有一条�
   const noisy = list.filter((s) => (s.audit?.findings || []).length);
   assert.deepEqual(noisy.map((s) => s.id + '=' + s.audit.findings.map((f) => f.code).join('+')), []);
 });
+
+test('DUPLICATE_PROVIDER：同一能力被两个插件实现时，排在后面的那份被标出来', () => {
+  const index = new Map([['reply.subscription', ['alpha', 'codex-subscription']]]);
+  const r = auditSkill(skill({ manifest: { id: 'codex-subscription', capabilities: ['reply.subscription'] }, providers: { 'reply.subscription': () => {} } }), { providerIndex: index });
+  assert.deepEqual(codes(r), ['DUPLICATE_PROVIDER']);
+  assert.match(r.findings[0].message, /alpha/);
+  const first = auditSkill(skill({ manifest: { id: 'alpha', capabilities: ['reply.subscription'] }, providers: { 'reply.subscription': () => {} } }), { providerIndex: index });
+  assert.deepEqual(codes(first), [], '排在最前的那份确实会被调用，不该报');
+  const solo = auditSkill(skill({ manifest: { id: 'solo', capabilities: ['reply.local-policy'] }, providers: { 'reply.local-policy': () => {} } }), { providerIndex: new Map([['reply.local-policy', ['solo']]]) });
+  assert.deepEqual(codes(solo), [], '只有一个提供者时不该报');
+});
+
+test('系统自带的 16 个扩展都带 builtin 标记，且只有 Codex 订阅接入默认关闭', () => {
+  const roots = ['plugins', 'skills'].map((k) => path.join(APP_ROOT, k));
+  const entries = [];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) return;
+    for (const dir of fs.readdirSync(root)) {
+      const file = ['plugin.json', 'skill.json'].map((n) => path.join(root, dir, n)).find((p) => fs.existsSync(p));
+      if (!file) continue;
+      entries.push({ dir, manifest: JSON.parse(fs.readFileSync(file, 'utf8')) });
+    }
+  }
+  assert.equal(entries.length, 16, '内置扩展数量变了，确认是否新增/移除');
+  assert.deepEqual(entries.filter((e) => e.manifest.builtin !== true).map((e) => e.dir), []);
+  const off = entries.filter((e) => e.manifest.enabledByDefault !== true).map((e) => e.manifest.id);
+  assert.deepEqual(off, ['codex-subscription'], '只有 Codex 订阅账号接入默认关闭（它会顶替 API 模型）');
+});
+
+test('manager.status 透出 builtin，UI 才能区分系统自带与市场安装', () => {
+  const id = '__builtin_probe__';
+  skillManager.register({
+    manifest: { id, name: id, version: '0.0.1', capabilities: [], requires: [], enabledByDefault: true, builtin: true },
+    source: 'test', dir: APP_ROOT, relDir: 'test/' + id, kind: 'plugin',
+    api: null, toolIds: [], providers: {}, hooks: { 'after-response': () => {} },
+    available: null, activate: null, deactivate: null, dispose: () => {}, promptSections: null,
+    loadError: null
+  });
+  try {
+    assert.equal(skillManager.status(id).builtin, true);
+  } finally {
+    skillManager.unregister(id);
+  }
+});

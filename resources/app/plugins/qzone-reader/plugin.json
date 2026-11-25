@@ -6,5 +6,6 @@
   "category": "utility",
   "description": "为本地插件提供 QQ 空间已读动态的只读快照。",
   "enabledByDefault": true,
+  "builtin": true,
   "capabilities": ["qzone.snapshot"]
 }

@@ -6,5 +6,6 @@
   "category": "utility",
   "description": "使用本地 Whisper 识别 QQ 语音，支持 SILK 和常见音频格式。",
   "enabledByDefault": true,
+  "builtin": true,
   "capabilities": ["media.transcribe", "media.transcribe.available"]
 }

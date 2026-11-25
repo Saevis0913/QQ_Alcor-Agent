@@ -38,7 +38,7 @@ export const NATIVE_ACTIONS=Object.freeze([
 ]);
 const supportedActions=new Set(NATIVE_ACTIONS);
 export class NativeBackend{
-  constructor(config,{controller=new NativeController(),mediaFile}={}){this.config=config;this.controller=controller;this.mediaFile=mediaFile;this.events=0;this.receiving=false;this.confirmed=false;this.receiveGeneration=0;this.messages=new Map();this.receiveProgress=new ReceiveProgress();this.lastUnrecognized=null;this.media=loadMediaCache(mediaFile);this.seen=new Set();this.messageCounter=randomBytes(4).readUInt32LE()&0x3fffffff;this.lastReceivedAt=null;this.lastError=null;this.directory=new NativeDirectory(this);this.controller.onServiceBound=()=>this.resumeReceiving().catch(()=>{});}
+  constructor(config,{controller=new NativeController(),mediaFile}={}){this.config=config;this.controller=controller;this.mediaFile=mediaFile;this.events=0;this.receiving=false;this.confirmed=false;this.receiveGeneration=0;this.messages=new Map();this.receiveProgress=new ReceiveProgress();this.pollLock=0;this.lastUnrecognized=null;this.media=loadMediaCache(mediaFile);this.seen=new Set();this.messageCounter=randomBytes(4).readUInt32LE()&0x3fffffff;this.lastReceivedAt=null;this.lastError=null;this.directory=new NativeDirectory(this);this.controller.onServiceBound=()=>this.resumeReceiving().catch(()=>{});}
   beginReceiving(){clearInterval(this.timer);this.receiving=true;this.lastError=null;this.timer=setInterval(()=>this.poll().catch(()=>{}),350);this.timer.unref();}
   async resumeReceiving(){
     // 心跳接管到消息服务后由控制器回调：这时才真正开始收消息，不重启会话。
@@ -51,7 +51,7 @@ export class NativeBackend{
   start(onEvent){this.onEvent=onEvent;this.metaTimer=setInterval(()=>{if(this.receiving&&this.controller.snapshot().connected)this.onEvent?.({time:Math.floor(Date.now()/1000),self_id:Number(this.account),post_type:'meta_event',meta_event_type:'heartbeat',status:{online:this.snapshot().qqOnline,good:this.snapshot().qqOnline},interval:15000});},15000);this.metaTimer.unref();}
   snapshot(){const s=this.controller.snapshot();return {...s,type:'native',http:s.connected?'reachable':'idle',ws:this.receiving&&s.connected?'open':'unavailable',qqOnline:!!(s.connected&&this.receiving&&this.confirmed),receiveReady:!!(s.connected&&this.receiving&&s.serviceBound!==false),deliveryMode:s.serviceBound===false?'identity-only':'native',events:this.events,receiveProgress:{...this.receiveProgress.snapshot(this.receiveGeneration),lastUnrecognized:this.lastUnrecognized},reconnects:this.recoveries??0,lastReceivedAt:this.lastReceivedAt,lastError:s.lastError??this.lastError,capabilityScope:'private-group-text-and-media-receive',onlineBasis:'local identity plus observed send/receive confirmation'};}
   recordRecovery(){this.recoveries=(this.recoveries??0)+1;}
-  stopReceiving(){clearInterval(this.timer);this.receiving=false;this.confirmed=false;this.receiveGeneration++;this.messages.clear();}
+  stopReceiving(){clearInterval(this.timer);this.receiving=false;this.polling=false;this.confirmed=false;this.receiveGeneration++;this.messages.clear();}
   connect(pid,expected={}){
     if(this.closing)return Promise.reject(new BridgeError('NATIVE_NOT_CONNECTED',503));
     if(this.connecting)return this.connecting.pid===pid&&this.connecting.account===expected.account&&this.connecting.startedAt===expected.startedAt?this.connecting.promise:Promise.reject(new BridgeError('CONNECTION_BUSY',409));
@@ -79,7 +79,9 @@ export class NativeBackend{
   async poll(){
     // 每一轮都留一条可读的接收证据（开始/完成/输入/发布数），现场分得清「没数据」和「卡住不返回」。
     if(this.polling||!this.receiving)return;
-    const generation=this.receiveGeneration;this.polling=true;this.receiveProgress.start(generation);const held=true;
+    // 锁必须带令牌：旧一轮 poll 在停收/重连后仍可能从 await 里返回，它的 finally 只清自己的锁，
+    // 否则会把新一轮刚拿到的锁抹掉，两个轮询循环同时跑（重复投递）。
+    const generation=this.receiveGeneration;const lock=++this.pollLock;this.polling=true;this.receiveProgress.start(generation);const held=true;
     try{
     for(let i=0;i<32&&this.receiving;i++){
       const packet=await this.controller.request('poll');if(generation!==this.receiveGeneration||!this.receiving)return;if(packet.status!==0)throw new Error('NATIVE_RECEIVE_FAILED');this.dropped=packet.dropped;
@@ -101,7 +103,7 @@ export class NativeBackend{
       // 普通私聊（没有群目录字段）在当前会话的这一轮里立刻发布，不等元数据；重复到达只保留一条。
       await publishDecodedMessage(this,event,generation);
       if(generation!==this.receiveGeneration||!this.receiving)return;
-    }}catch(error){if(error?.message==='HOST_QUEUE_TIMEOUT'){this.receiveProgress.totals.idleTimeouts++;return;}if(generation===this.receiveGeneration){this.lastError='NATIVE_RECEIVE_CONNECTION_LOST';this.stopReceiving();try{await this.controller.disconnect();}catch{}}}finally{if(held)this.polling=false;this.receiveProgress.finish();}
+    }}catch(error){if(error?.message==='HOST_QUEUE_TIMEOUT'){this.receiveProgress.totals.idleTimeouts++;return;}if(generation===this.receiveGeneration){this.lastError='NATIVE_RECEIVE_CONNECTION_LOST';this.stopReceiving();try{await this.controller.disconnect();}catch{}}}finally{if(held&&this.pollLock===lock)this.polling=false;this.receiveProgress.finish();}
   }
   async disconnect(){this.stopReceiving();await this.controller.disconnect();}
   rememberMedia(event){

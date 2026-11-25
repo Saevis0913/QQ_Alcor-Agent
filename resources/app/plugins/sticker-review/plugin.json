@@ -6,6 +6,7 @@
   "category": "media",
   "description": "收藏前审查恐怖、猎奇和恶俗图片。视觉模型无法明确判断时暂停入库。",
   "enabledByDefault": true,
+  "builtin": true,
   "capabilities": ["sticker.review"],
   "settings": { "maxModelCallsPerDay": 60 },
   "configSchema": {

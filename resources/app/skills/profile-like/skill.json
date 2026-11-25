@@ -6,6 +6,7 @@
   "category": "message",
   "description": "对方明确要求时，为其本人的QQ个人资料卡点赞。",
   "enabledByDefault": true,
+  "builtin": true,
   "settings": {},
   "configSchema": {},
   "prompt": {

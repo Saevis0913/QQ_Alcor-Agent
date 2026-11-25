@@ -227,6 +227,18 @@ export class SkillManager {
    * 所有 Skill 的 requires 合集。
    * 「有效性」用得到：一个能力即使核心不直接取用，只要有别的 Skill 依赖它就不算没人用。
    */
+  /** 能力 → 提供者 id 列表。两个插件抢同一个能力时，只有一个会真的被调用。 */
+  providerIndex() {
+    const index = new Map();
+    for (const skill of this.registry.list()) {
+      for (const cap of Object.keys(skill.providers || {})) {
+        if (!index.has(cap)) index.set(cap, []);
+        index.get(cap).push(skill.manifest.id);
+      }
+    }
+    return index;
+  }
+
   requiredCapabilities() {
     const required = new Set();
     for (const skill of this.registry.list()) {
@@ -258,6 +270,8 @@ export class SkillManager {
       description: m.description,
       deprecated: m.deprecated,
       source: skill.source || 'skill',
+      // 系统自带（随安装包发布）与插件市场安装的区别，UI 据此显示徽章。
+      builtin: m.builtin === true,
       // 目录语义类型 + 所在目录（仓库相对路径）：
       //   kind = 'plugin' 确定性型（能力/钩子，必然触发）
       //   kind = 'skill'  LLM 型（注册工具，模型决定）
@@ -287,7 +301,7 @@ export class SkillManager {
       // audit：加载成功 ≠ 真的生效。这里把「钩子名核心不发射 / 声明了没实现 /
       // 声明了没人消费 / 没有接点」四类静默失效变成结构化条目，
       // /api/skills 与技能页直接渲染，不用让用户猜为什么"开了却没反应"。
-      audit: auditSkill(skill, { requiredBy: this.requiredCapabilities() }),
+      audit: auditSkill(skill, { requiredBy: this.requiredCapabilities(), providerIndex: this.providerIndex() }),
       // 该模块注册的行为钩子名（确定性型常见形态：靠钩子插进主流程）
       hooks: Object.keys(skill.hooks || {}),
       // 当前设置值（密文已脱敏）与字段描述 —— UI 靠这两个渲染"技能设置"弹窗。

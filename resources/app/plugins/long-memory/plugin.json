@@ -6,6 +6,7 @@
   "category": "utility",
   "description": "按机器人账号和发言者的 QQ 号，压缩昨日聊天的偏好、明确事实与约定，保留日期和来源。支持自动引用，私聊摘要默认只留在原私聊。",
   "enabledByDefault": true,
+  "builtin": true,
   "capabilities": [
     "memory.lookup",
     "memory.change"

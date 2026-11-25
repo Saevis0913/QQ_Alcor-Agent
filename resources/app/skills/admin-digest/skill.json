@@ -6,5 +6,6 @@
   "category": "utility",
   "description": "管理员在 QQ 私聊请求时，直接返回机器人状态和脱敏后的近期异常。",
   "enabledByDefault": true,
+  "builtin": true,
   "requires": ["admin.error_digest"]
 }

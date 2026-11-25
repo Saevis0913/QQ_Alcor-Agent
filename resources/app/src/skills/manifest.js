@@ -109,7 +109,9 @@ export function normalizeManifest(raw, { fallbackId = '' } = {}) {
       configSchema: (raw.configSchema && typeof raw.configSchema === 'object') ? raw.configSchema : {},
       settings: (raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings)) ? raw.settings : {},
       prompt: normalizePrompt(raw.prompt),
-      deprecated: raw.deprecated === true
+      deprecated: raw.deprecated === true,
+      // 系统自带：随安装包发布、升级时保留。插件市场装进来的没有这个标记。
+      builtin: raw.builtin === true
     },
     problems
   };

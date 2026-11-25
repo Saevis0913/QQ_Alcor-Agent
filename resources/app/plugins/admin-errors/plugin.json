@@ -6,6 +6,7 @@
   "category": "utility",
   "description": "在内存中汇总当前机器人账号近期发送、工具、会话和状态异常。默认不主动发私信。",
   "enabledByDefault": true,
+  "builtin": true,
   "capabilities": ["admin.error_digest"],
   "settings": { "autoReport": false, "reportToQQ": "", "intervalSeconds": 300 },
   "configSchema": {

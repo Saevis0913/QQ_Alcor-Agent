@@ -6,6 +6,7 @@
   "category": "utility",
   "description": "按 QQ 号和日期查询当前会话有权查看的长期记忆。可明确请求更正或删除原会话中自己的记忆，管理员可在管理员私聊维护档案。",
   "enabledByDefault": true,
+  "builtin": true,
   "requires": [
     "memory.lookup",
     "memory.change"

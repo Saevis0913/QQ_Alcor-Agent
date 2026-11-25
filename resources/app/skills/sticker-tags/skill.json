@@ -6,6 +6,7 @@
   "category": "media",
   "description": "按文字标签查找当前会话收藏的表情，也可按需处理指定的多条表情消息。",
   "enabledByDefault": true,
+  "builtin": true,
   "prompt": {
     "sections": [{ "id": "sticker-tags", "title": "按情绪检索收藏表情", "priority": 45,
       "content": "需要表情回应时，可按当前情绪或场景检索本会话收藏。结果提供可交给 send_sticker 的 ID。已经有清晰标签时无需再让模型看图。批量收藏只处理当前会话明确指定的表情消息。" }]

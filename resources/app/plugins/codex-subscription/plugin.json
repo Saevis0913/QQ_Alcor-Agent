@@ -1,0 +1,72 @@
+{
+  "id": "codex-subscription",
+  "name": "Codex 订阅账号接入",
+  "version": "1.0.3",
+  "apiVersion": 1,
+  "entry": "index.js",
+  "enabledByDefault": false,
+  "builtin": true,
+  "category": "model",
+  "description": "使用本机已登录的 ChatGPT Work/Codex 订阅。聊天复用 Alcor 人设和工具，工作生成文本文件并在本机打包。",
+  "capabilities": [
+    "reply.subscription"
+  ],
+  "permissions": [],
+  "settings": {
+    "mode": "API 密钥",
+    "chatModel": "gpt-5.6-luna",
+    "chatEffort": "medium",
+    "codexExecutable": "",
+    "codexData": ""
+  },
+  "configSchema": {
+    "mode": {
+      "type": "enum",
+      "label": "模型接入模式",
+      "values": [
+        "API 密钥",
+        "订阅聊天",
+        "订阅工作"
+      ],
+      "description": "订阅模式在已放行的 QQ 会话中生效。切回 API 密钥可恢复原模型。"
+    },
+    "chatModel": {
+      "type": "enum",
+      "label": "订阅聊天模型",
+      "values": [
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-6-luna",
+        "gpt-6-sol",
+        "gpt-6-astra",
+        "gpt-6.2-sol",
+        "gpt-6.2-astra"
+      ],
+      "description": "发件人不是后台管理员时自动选择账号可用的 5.6 模型。工作模式在 QQ 内选择。"
+    },
+    "chatEffort": {
+      "type": "enum",
+      "label": "订阅聊天推理档位",
+      "values": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "description": "High 及以上由后台管理员使用，档位还需在本机模型目录中可用。"
+    },
+    "codexExecutable": {
+      "type": "string",
+      "label": "本机 Codex 程序",
+      "description": "留空自动查找（%LOCALAPPDATA%\\OpenAI\\Codex\\bin 下最新的一份）。"
+    },
+    "codexData": {
+      "type": "string",
+      "label": "本机 Codex 登录目录",
+      "description": "留空自动使用 %USERPROFILE%\\.codex。"
+    }
+  }
+}

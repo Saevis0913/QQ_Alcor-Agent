@@ -60,13 +60,14 @@ const FINDING = Object.freeze({
   UNCONSUMED_CAPABILITY: 'UNCONSUMED_CAPABILITY',
   DECLARED_NOT_IMPLEMENTED: 'DECLARED_NOT_IMPLEMENTED',
   IMPLEMENTED_NOT_DECLARED: 'IMPLEMENTED_NOT_DECLARED',
-  NO_ENTRY_POINT: 'NO_ENTRY_POINT'
+  NO_ENTRY_POINT: 'NO_ENTRY_POINT',
+  DUPLICATE_PROVIDER: 'DUPLICATE_PROVIDER'
 });
 
 /**
  * 审计一个已加载（或加载失败）的 Skill。
  * @param {object} skill loader 注册进 registry 的实例 { manifest, providers, hooks, toolIds, promptSections, loadError, kind }
- * @param {{ requiredBy?: Set<string>|string[], knownHooks?: Record<string,string>, consumed?: Record<string,string> }} [options]
+ * @param {{ requiredBy?: Set<string>|string[], knownHooks?: Record<string,string>, consumed?: Record<string,string>, providerIndex?: Map<string,string[]> }} [options]
  *   requiredBy：所有 Skill 的 requires 合集（被别人用掉的能力也算生效）。
  * @returns {{ id: string, effective: boolean, findings: Array<{code:string, level:'warn'|'info', message:string, fix:string}> }}
  */
@@ -123,6 +124,21 @@ export function auditSkill(skill, options = {}) {
         code: FINDING.IMPLEMENTED_NOT_DECLARED, level: 'info',
         message: `providers 提供了「${cap}」，但清单 capabilities 没声明`,
         fix: '把能力名补进清单 capabilities（能力页与 /api/skills/capabilities 靠它展示）。'
+      });
+    }
+  }
+
+  // 3.5 同一个能力被多个 Skill 实现：核心多数调用点只取 providersOf(...)[0]，
+  //     排在后面的那份实现永远不会被调用 —— 这就是「装了但没反应」的另一种来源。
+  const providerIndex = options.providerIndex;
+  if (providerIndex && typeof providerIndex.get === 'function') {
+    for (const cap of providers) {
+      const owners = (providerIndex.get(cap) || []).filter(Boolean);
+      if (owners.length < 2 || owners[0] === id) continue;
+      findings.push({
+        code: FINDING.DUPLICATE_PROVIDER, level: 'info',
+        message: `能力「${cap}」同时由 ${owners.join('、')} 提供；核心多数调用点只取第一个（${owners[0]}），本插件这份不会被调用`,
+        fix: '只保留一处实现；确实要并存就让调用点遍历全部提供者，否则从清单里去掉重复能力。'
       });
     }
   }

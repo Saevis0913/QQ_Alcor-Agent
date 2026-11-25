@@ -6,6 +6,7 @@
   "category": "media",
   "description": "把当前会话收到的 QQ 表情组成小批次，按人设筛选并添加情绪、标签和适用场景。",
   "enabledByDefault": true,
+  "builtin": true,
   "capabilities": ["sticker.batch_collect", "sticker.label"],
   "settings": { "preference": "", "batchDelayMs": 4500, "maxModelCallsPerDay": 60 },
   "configSchema": {

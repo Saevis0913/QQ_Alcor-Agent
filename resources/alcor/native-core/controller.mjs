@@ -137,6 +137,18 @@ export class NativeController {
     this.service={attempts:0,lastAt:0,found:0,lastCode:null,lastObject:null,lastHits:null,lastScanAt:null,lastMillis:null,neverCreatedAt:null};this.onServiceBound=null;
   }
   snapshot(){return {connected:!!this.owner,pid:this.owner?.pid??null,accountLastFour:this.owner?.account?.slice(-4)??null,receiveReady:false,identitySource:this.owner?.identitySource??null,serviceBound:this.owner?this.owner.serviceBound===true:null,rebindAttempts:this.rebind.attempts,reboundAt:this.rebind.upgradedAt,serviceAdopt:{attempts:this.service.attempts,found:this.service.found,lastCode:this.service.lastCode,lastObject:this.service.lastObject,lastHits:this.service.lastHits,lastMillis:this.service.lastMillis,neverCreatedAt:this.service.neverCreatedAt},lastError:this.lastError,lastFailure:this.lastFailure};}
+  /**
+   * 接管计数是「每个 QQ 进程」的：用户重连 / 重启 QQ 后应当重新从 0 开始扫（最多 8 次）。
+   * 不重置的话，上一个进程把次数用尽，新进程连一次扫描机会都没有，
+   * 诊断里的 neverCreatedAt 也会一直停留在旧进程的时间上。
+   * 同一个 pid 重连不重置 —— 否则 45 秒节流形同虚设。
+   */
+  noteServiceOwner(pid){
+    if(this.servicePid===pid)return false;
+    this.servicePid=pid;
+    this.service={attempts:0,lastAt:0,found:0,lastCode:null,lastObject:null,lastHits:null,lastScanAt:null,lastMillis:null,neverCreatedAt:null};
+    return true;
+  }
   enqueue(fn){const next=this.tail.then(fn);this.tail=next.catch(()=>{});return next;}
   resumeSelection(){
     const owner=this.owner;
@@ -174,6 +186,7 @@ export class NativeController {
       if(startedAt&&creation!==startedAt)throw new Error('NATIVE_PROCESS_CHANGED');
       const owner={pid,nonce:randomBytes(16).toString('hex'),account:null,startedAt:creation};
       owner.rvas=packProfile?.rvas||findQQBuildProfile(row.moduleName||'wrapper.node',row.sha256)?.rvas||profileByVersion(row.version)?.rvas||null;
+      this.noteServiceOwner(pid);
       if(this.closed||this.disconnecting)throw new Error('NATIVE_CONNECT_CANCELLED');
       const loaderFn=packLoaderPath?((p,n,m,s)=>this.loader(p,n,m,s,packLoaderPath)):this.loader;
       const inspect=await runLoader(loaderFn,pid,owner.nonce,'inspect-qq',creation);if(inspect.loaded)throw new Error('HOST_ALREADY_PRESENT');

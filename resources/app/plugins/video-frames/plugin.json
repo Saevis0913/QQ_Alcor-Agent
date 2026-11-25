@@ -6,5 +6,6 @@
   "category": "utility",
   "description": "使用本地 FFmpeg 均匀抽取视频画面，供视觉模型查看。",
   "enabledByDefault": true,
+  "builtin": true,
   "capabilities": ["video.frames", "video.frames.available"]
 }

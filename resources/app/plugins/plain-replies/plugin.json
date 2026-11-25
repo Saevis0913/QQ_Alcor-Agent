@@ -1,0 +1,35 @@
+{
+  "id": "plain-replies",
+  "name": "回复去ai味",
+  "version": "1.0.1",
+  "apiVersion": 1,
+  "entry": "index.js",
+  "category": "utility",
+  "description": "发言前去掉常见套话，把命中的词句换成更自然的说法，并向现有模型补充表达规范。",
+  "enabledByDefault": true,
+  "builtin": true,
+  "requires": [],
+  "permissions": [],
+  "settings": {
+    "rewriteEnabled": true,
+    "promptEnabled": true,
+    "extraReplacements": ""
+  },
+  "configSchema": {
+    "rewriteEnabled": {
+      "type": "boolean",
+      "label": "发言前改写",
+      "description": "自动处理文字消息中的常见套话和固定搭配。"
+    },
+    "promptEnabled": {
+      "type": "boolean",
+      "label": "给模型添加表达规范",
+      "description": "让当前模型在生成回复时遵循自然表达规则，无需另发一次请求。"
+    },
+    "extraReplacements": {
+      "type": "string",
+      "label": "自定义近义词",
+      "description": "可留空。填写「原词=新说法」，多条用竖线 | 隔开，例如「有待商榷=还得再看看」。最多 40 条，原词最多 80 字，新说法最多 120 字。同名近义词用你填的说法。"
+    }
+  }
+}

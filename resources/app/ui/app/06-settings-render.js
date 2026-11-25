@@ -1492,7 +1492,7 @@ function renderModulePage(kind) {
     return `
     <div class="mcard ${stateCls}" data-skill-id="${esc(s.id)}" data-search="${esc(haystack)}" >
       <div class="mcard-main">
-        <div class="mcard-name">${esc(s.name)} <span class="skill-card__ver">v${esc(s.version)}</span></div>
+        <div class="mcard-name">${esc(s.name)} <span class="skill-card__ver">v${esc(s.version)}</span>${s.builtin ? '<span class="skill-card__tag" title="随安装包发布，卸载或升级 Alcor 时保留">系统自带</span>' : ''}</div>
         ${(s.toolIds || []).length ? `<div class="mcard-tools" title="本技能注册的工具 id">${(s.toolIds || []).map((id) => `<code class="mcard-tool-id">${esc(id)}</code>`).join('')}</div>` : ''}
         <div class="mcard-desc">${esc(s.description || '（没有写介绍）')}</div>
         ${errLine ? `<div class="mcard-err">${esc(errLine)}</div>` : ''}
