@@ -1,11 +1,11 @@
 <!-- 每次发布由 tools/publish-update.mjs 覆盖本文件，这里只保留最新一条。 -->
-# Alcor Agent 小版本更新记录
+# Alcor Agent 更新记录
 
 - 版本：0.3.3
 - 发布时间：2026-11-25T15:42:50.673Z
 - 安装包：Alcor-Agent-Setup-0.3.3-x64.exe（319466906 B）
 - sha256：46350d3dc6dc8a45c5f8a6e8fee0c17af55d8c9d9cde6b13563700e966b1cce8
-- 下载：https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.3-x64.exe
+- 下载：https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3.3/Alcor-Agent-Setup-0.3.3-x64.exe
 
 ## 本次更新
 
