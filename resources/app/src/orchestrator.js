@@ -19,11 +19,13 @@ import { currentProviders } from './providers.js';
 import { skillManager } from './skills/manager.js';
 import { getToolAvailability } from './tool-registry.js';
 import { rescueUnsentReply } from './reply-rescue.js';
-import {sessionHasEffects,errorCode} from './session-effects.js';
+import {sessionHasEffects,sessionStatus,errorCode} from './session-effects.js';
 import {nativeStickerEntries} from './native-stickers.js';
 import { ensureStickerDecision, isExplicitStickerRequest } from './sticker-policy.js';
 import {inferRunErrorReason} from './session-diagnostics.js';
 import { preserveToolExecutions, recordToolExecution, redactToolRecord } from './session-tool-executions.js';
+import { chatAllowed } from './inbound-policy.js';
+import { isGloballyBlocked } from './community.js';
 
 const replySourceKey = ({ chatKey, mid, selfId }) => JSON.stringify([chatKey, String(mid), String(selfId)]);
 
@@ -138,6 +140,9 @@ export class Orchestrator {
     const s = this.sessions.current.get(id) || this.sessions.get(id);
     if (!s) return { ok: false, reason: '会话不存在' };
     if (s.extensionId) return { ok: false, reason: '这是后台扩展任务，请在对应扩展中检查设置，任务会按计划再次执行。' };
+    if (s.subscriptionProvider || this.#subscription(s.chatKey)) {
+      return { ok:false, reason:'为避免重放近期消息，请让原发件人重新发起订阅请求。' };
+    }
     if (s.status !== 'error') return { ok: false, reason: '只有失败的会话才能重试' };
     if(s.selfId&&String(s.selfId)!==String(this.onebot.selfId||''))return {ok:false,reason:'该记录属于其他 QQ 账号，无法重试'};
     if (sessionHasEffects(s)) return { ok: false, reason: '该会话已有实际动作或送达状态未知，重试可能造成重复发送' };
@@ -179,8 +184,54 @@ export class Orchestrator {
    * 的锚点"，窗口内追加判定会让"批的触发原因"随每条新消息漂移（reason
    * 与 contextLimit 对不上账）。窗口只是聚批，不是判定窗口。
    */
-  onIncoming(chatKey, entry = null) {
+  onIncoming(chatKey, entry = null, onResult = null) {
     if (this.paused || this.aborted) return { status: 'paused', reason: '机器人已暂停，收到的消息暂不回复。' };
+    const subscription = this.#subscription(chatKey);
+    if (subscription && storeConfigForChat(chatKey).replyPolicy?.mode === 'off') {
+      if (entry) this.store.markEntryRead(chatKey, entry.id);
+      return { status: 'skipped', reason: '本会话已关闭发言。' };
+    }
+    if (subscription?.mode === 'work') {
+      if (entry) {
+        this.store.markEntryRead(chatKey, entry.id);
+        this.emit('chat-update', chatKey);
+      }
+      if (!entry || entry.isPoke || entry.self) return { status:'skipped', reason:'订阅工作等待文字请求。' };
+      if (!subscription.active) return { status:'error', reason:subscription.reason };
+      const selfId = String(entry.selfId || this.onebot.selfId || '');
+      const scopeValid = () => this.#subscriptionAllows(chatKey, entry, selfId);
+      if (!scopeValid()) return { status:'skipped', reason:'工作消息当前未放行。' };
+      if (this.backgroundAbortController.signal.aborted) this.backgroundAbortController = new AbortController();
+      const appSignal = this.backgroundAbortController.signal;
+      let delivered = false;
+      const reply = async (text, signal, extraScope) => {
+        const beforeDispatch = () => {
+          if (!scopeValid() || this.#subscription(chatKey)?.mode !== 'work' || (extraScope && !extraScope())) {
+            throw new Error('工作会话已切换或原请求已撤回。');
+          }
+        };
+        beforeDispatch();
+        const sent = await this.sender.sendTextBatch(chatKey, [text], {
+          expected_self_id:selfId, beforeDispatch,
+          atUserId:chatKey.startsWith('group:') ? entry.senderId : null,
+          signal:signal ? AbortSignal.any([appSignal, signal]) : appSignal
+        });
+        delivered ||= Boolean(sent?.sent?.length);
+        return sent;
+      };
+      Promise.resolve().then(async () => {
+        if ((chatKey.startsWith('group:') && await this.#checkSelfMuted(chatKey)) || !scopeValid()) return;
+        await subscription.receive({ chatKey, selfId, senderId:entry.senderId, text:stripMentions(entry),
+          scopeValid, reply, signal:appSignal, isAdmin:() => this.#subscriptionAdmin(entry) });
+      }).then(() => {
+        if (appSignal.aborted) onResult?.({status:'aborted',reason:'订阅工作已中止。'});
+        else onResult?.({status:delivered ? 'replied' : 'noreply',reason:delivered ? '订阅工作已回复。' : '工作消息处理结束。'});
+      }).catch(error => {
+        skillManager.recordError(subscription.id, error);
+        onResult?.({status:'error',reason:'订阅工作处理失败。'});
+      });
+      return { status:'queued', reason:'已交给订阅工作模式。' };
+    }
     // 运行中 / 倒计时中：消息保持未读（不判定、不重置），由会话结束的
     // drain 路径补判定（见 wake 末尾的 drain 注释）。
     if (this.runningChats.has(chatKey)) return { status: 'queued', reason: '等待当前处理结束后检查这条消息。' };
@@ -189,7 +240,7 @@ export class Orchestrator {
     const cfg = getConfig();
     // 前置条件（与 wake 的闸门同口径，在这里提前拦截可以少建一次定时器）：
     //   模型未设置 → 消息保留未读，设置后（下一条消息或恢复积压）自动补处理
-    if (!String(cfg.api.model || '').trim()) return { status: 'no_model', reason: '尚未配置模型，请在设置中选择模型。' };
+    if (!subscription && !String(cfg.api.model || '').trim()) return { status: 'no_model', reason: '尚未配置模型，请在设置中选择模型。' };
     const triggerEntry = entry || this.store.peekUnread(chatKey, 1)?.[0];
     // 被 @ / 拍了拍 / 引用我 之后，这个会话进入 8 分钟活跃期（不改变档位，
     // 只是把"多听几条、给一次插话机会"记下来）。
@@ -198,7 +249,7 @@ export class Orchestrator {
     }
     // 活跃期内的群：必响应，视作触发（与旧版"跳过判定"语义一致）
     const active = this.#activeState(chatKey);
-    if (!active) {
+    if (!active && !subscription) {
       const tierResult = resolveContextTier({
         triggerEntries: triggerEntry ? [triggerEntry] : [],
         selfNickname: cfg.persona?.selfNickname || this.onebot.selfNickname || '',
@@ -402,7 +453,9 @@ export class Orchestrator {
   // ── 核心循环 ───────────────────────────────────────────────────────────
 
   async wake(chatKey, { proactive = false, waitingSessionId = null, reuseSessionId = null, verifiedEntry = null } = {}) {
-    const replyPolicy = storeConfigForChat(chatKey).replyPolicy;
+    const chatSettings = storeConfigForChat(chatKey);
+    const replyPolicy = chatSettings.replyPolicy;
+    const subscription = this.#subscription(chatKey);
     if (replyPolicy?.mode === 'off' || (proactive && replyPolicy && replyPolicy.mode !== 'all')) {
       if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted');
       return;
@@ -410,9 +463,13 @@ export class Orchestrator {
     if (this.aborted) { if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted'); return; }
     if (this.paused && !proactive) { if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted'); return; }
     if (this.runningChats.has(chatKey)) return;
+    if (subscription && (proactive || subscription.mode === 'work' || !subscription.active)) {
+      if (waitingSessionId) this.#finishWaiting(waitingSessionId, subscription.active ? 'aborted' : 'error', subscription.reason);
+      return;
+    }
 
     // 模型未设置：不产生报错会话，消息保留为未读；设置模型后（下一条消息或手动唤醒）自动补处理
-    if (!String(getConfig().api.model || '').trim()) {
+    if (!subscription && !String(getConfig().api.model || '').trim()) {
       if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted', '模型未设置');
       return;
     }
@@ -474,7 +531,22 @@ export class Orchestrator {
     //       会话 + 【已读信息】为空 + 白烧一次 LLM 调用。）
     const cfgForJudge = getConfig();
     let triggerEntries = [];
-    if (!proactive) {
+    if (subscription) {
+      // Each admitted message gets its own decision. Keep the remaining unread
+      // entries for the existing drain loop so two senders never share a model permission.
+      for (const entry of this.store.peekUnread(chatKey, 500) || []) {
+        this.store.markEntryRead(chatKey, entry.id);
+        if (this.#subscriptionAllows(chatKey, entry, String(entry.selfId || this.onebot.selfId || ''))) {
+          triggerEntries = [entry];
+          break;
+        }
+      }
+      if (!triggerEntries.length) {
+        if (waitingSessionId) this.#discardWaiting(waitingSessionId);
+        return;
+      }
+      this.#cancelUnreadFallback(chatKey);
+    } else if (!proactive) {
       const probe = (this.store.peekUnread(chatKey, 500) || []).filter(entry => !entry.recalled);
       if (probe.length === 0 && waitingSessionId) {
         this.#finishWaiting(waitingSessionId, 'aborted');
@@ -575,7 +647,11 @@ export class Orchestrator {
     // 判定输入相同（就是这批消息），结果一致；随机档不传 roll、重掷一次并
     // 固定在本次运行里，会话记录（session.contextReason）记录的就是这里的值。
     const cfgNow = getConfig();
-    const tierResult = proactive
+    const speechTier = ({ mentions:2, probability:3, all:4 })[replyPolicy?.mode] || Number(chatSettings.contextTier) || 4;
+    const tierResult = subscription
+      ? { tier:speechTier, count:Math.max(0, Number(chatSettings.historyCount || chatSettings.allCount) || 0),
+          reason:'订阅聊天由模型按当前档位判断', shouldRespond:true }
+      : proactive
       ? { tier: 4, count: Math.max(0, Number(storeConfigForChat(chatKey).historyCount) || 80), reason: '主动机会（带历史）', shouldRespond: true }
       : resolveContextTier({
         triggerEntries,
@@ -592,7 +668,7 @@ export class Orchestrator {
     // 活跃期覆盖：必响应，读取条数与其余档位一致（统一 historyCount），
     // reason 标注活跃来源，会话页可解释"为什么 1 档设置却响应了"。
     const activeState = this.#activeState(chatKey);
-    const effectiveTier = activeState
+    const effectiveTier = activeState && !subscription
       ? { tier: 3, count: Math.max(0, Number(storeConfigForChat(chatKey).historyCount) || 80), reason: `活跃期（话题：${activeState.topic}）`, shouldRespond: true }
       : tierResult;
 
@@ -602,7 +678,7 @@ export class Orchestrator {
     // 四档（全部响应）也算"必须开口"：用户把滑条拉到四档就是在说"这个会话别筛我"，
     // 模型再自己判断"插不上话"就沉默，用户看到的就是"四档也回不了"。
     const tierFour = Number(tierResult?.tier) >= 4 && tierResult?.shouldRespond !== false;
-    const mustReply = !proactive && (String(chatKey).startsWith('private:') || summoned || tierFour);
+    const mustReply = !subscription && !proactive && (String(chatKey).startsWith('private:') || summoned || tierFour);
 
     this.runningChats.add(chatKey);
     const seq = (this.runSeq.get(chatKey) || 0) + 1;
@@ -647,6 +723,7 @@ export class Orchestrator {
       this.emit('session-start', { sessionId: session.id, chatKey, triggerSummary });
     }
     this.activeRuns.set(chatKey, session.id);
+    if (subscription) session.subscriptionProvider = subscription.id;
     this.emit('chat-update', chatKey);
 
     // ── 会话级重试 ──
@@ -662,13 +739,13 @@ export class Orchestrator {
     try {
       for (let attempt = 1; attempt <= MAX_SESSION_ATTEMPTS; attempt++) {
         try {
-          await this.#runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit: effectiveTier.count, tierInfo: effectiveTier, activeTopic: activeState ? activeState.topic : null, mustReply });
+          await this.#runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit: effectiveTier.count, tierInfo: effectiveTier, activeTopic: activeState ? activeState.topic : null, mustReply, subscription });
           lastError = null;
           break;
         } catch (error) {
           lastError = error;
           const sentCount = (session.sent || []).length;
-          const canRetry = attempt < MAX_SESSION_ATTEMPTS
+          const canRetry = !subscription && attempt < MAX_SESSION_ATTEMPTS
             && isRetryableError(error)
             && sentCount === 0 && !sessionHasEffects(session) && !session.nonretryable
             && !this.aborted;
@@ -725,6 +802,11 @@ export class Orchestrator {
           console.warn('[orchestrator] 补发失败:', error?.message ?? error);
         }
       }
+
+      // ── 重新结算（2026-11-25）──
+      // 补发跑在 #runAgent 收尾之后：那次 finish 已经把会话从 current 移除，
+      // 补发真正发出的消息既写不进文件也广播不出去，界面就停在第一次的 noreply。
+      if (session.forcedReply && !lastError && !this.aborted) this.#settleAfterForcedReply(session, chatKey);
     } finally {
       this.#runMessageSources.delete(session.id);
       this.activeRuns.delete(chatKey);
@@ -742,7 +824,7 @@ export class Orchestrator {
     }
 
     // 记忆自动整理（后台静默，绝不阻塞/影响聊天主流程）
-    this.#maybeConsolidateMemory(chatKey);
+    if (!subscription) this.#maybeConsolidateMemory(chatKey);
   }
 
   /**
@@ -830,7 +912,39 @@ export class Orchestrator {
     });
   }
 
-  async #runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit = null, tierInfo = null, activeTopic = null, mustReply = false, forceReply = false }) {
+  #subscription(chatKey) {
+    for (const { ownerId, provider } of skillManager.capabilities.providersOf('reply.subscription')) {
+      if (typeof provider !== 'function' || !skillManager.isLoaded(ownerId) || !skillManager.isEnabled(ownerId)) continue;
+      const selected = provider({ chatKey });
+      if (!selected) continue;
+      const status = skillManager.isActive(ownerId, { chatKey });
+      return { ...selected, id:ownerId, active:status.active, reason:status.reason || '' };
+    }
+    const config = getConfig().skills?.['codex-subscription'];
+    if (config?.enabled !== false && (config?.mode === '订阅聊天' || config?.mode === '订阅工作')) {
+      return { id:'codex-subscription', mode:config.mode === '订阅聊天' ? 'chat' : 'work', active:false,
+        reason:'订阅插件未能加载。请在插件页刷新并检查错误。' };
+    }
+    return null;
+  }
+
+  #subscriptionAllows(chatKey, entry, selfId) {
+    const [kind,id] = chatKey.split(':');
+    const cfg = getConfig();
+    const senderId = String(entry?.senderId || '');
+    return Boolean(selfId && senderId && senderId !== selfId && this.onebot.connected && String(this.onebot.selfId) === selfId
+      && !this.paused && !this.aborted && !entry.self && !entry.recalled
+      && (entry.mid == null || !this.hasRecall?.(chatKey, entry.mid, selfId))
+      && storeConfigForChat(chatKey).replyPolicy?.mode !== 'off' && chatAllowed(kind,id,cfg)
+      && !isGloballyBlocked(senderId)
+      && (kind !== 'group' || !(cfg.blocklist?.[id] || []).map(String).includes(senderId)));
+  }
+
+  #subscriptionAdmin(entry) {
+    return (getConfig().privatePolicy?.adminQQs || []).map(String).includes(String(entry?.senderId || ''));
+  }
+
+  async #runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit = null, tierInfo = null, activeTopic = null, mustReply = false, forceReply = false, subscription = null }) {
     const cfg = getConfig();
     session.selfId ??= String(this.onebot.selfId||'');
     if(session.selfId&&session.selfId!==String(this.onebot.selfId||''))throw Object.assign(new Error('AGENT_ACCOUNT_CHANGED'),{nonretryable:true});
@@ -878,7 +992,7 @@ export class Orchestrator {
       chatKey, kind, chatId, chatName,
       selfId: session.selfId, triggerEntries,
       model: cfg.api.model,
-      provider: cfg.api.provider,
+      provider: subscription?.id || cfg.api.provider,
       visionEnabled,
       searchEnabled,
       proactive,
@@ -918,6 +1032,7 @@ export class Orchestrator {
     this.#runMessageSources.set(session.id, { messageSources, replySources });
     const runInterrupted = () => {
       if (abortSignal.aborted || this.aborted || this.sessionAbortMarks.has(session.id)) return true;
+      if (subscription && !scopeValid()) return true;
       for (const entry of messageSources) {
         if (entry.recalled) {
           session.finishReason = '本轮包含已撤回的消息，停止后续处理。';
@@ -931,6 +1046,14 @@ export class Orchestrator {
         }
       }
       return false;
+    };
+    const scopeValid = () => {
+      const current = this.#subscription(chatKey);
+      return current?.id === subscription?.id && current.active && current.mode === 'chat'
+        && this.#subscriptionAllows(chatKey, triggerEntries[0], session.selfId);
+    };
+    const ensureDispatch = () => {
+      if (runInterrupted()) throw new Error('订阅聊天的本次发言已中止。');
     };
 
     // ── 主人识别（owner-identity Skill）──
@@ -984,6 +1107,7 @@ export class Orchestrator {
       hasRecall: this.hasRecall,
       proactive,
       contextLimit,
+      readBeforeId:subscription ? triggerEntries[0].id : undefined,
       tierInfo,
       skillContext,
       // 活跃模式：注入当前话题锚点（buildUserPrompt 据此渲染【活跃模式】段）
@@ -1002,7 +1126,7 @@ export class Orchestrator {
     session.model = cfg.api.model;
     // 记录本次调用走的是哪个渠道（A6API / openrouter / 本地中转…）。
     // 同名模型在不同渠道是不同商品，用量与价格要分开统计。
-    session.vendor = vendorOfConfig(cfg);
+    session.vendor = subscription?.id || vendorOfConfig(cfg);
     session.chatName = chatName;
     // 记录本次读了多长的上下文（排查提示词长度时很有用）
     if (tierInfo) {
@@ -1077,7 +1201,21 @@ export class Orchestrator {
       hasRecall: this.hasRecall,
       memory: this.memory,
       stickers: this.stickers,
-      sender: this.sender,
+      sender: subscription ? new Proxy(this.sender, {
+        get(target, key) {
+          const member = Reflect.get(target, key, target);
+          if (typeof member !== 'function') return member;
+          if (!String(key).startsWith('send')) return member.bind(target);
+          return (recipient, message, options = {}) => {
+            ensureDispatch();
+            return member.call(target, recipient, message, { ...options, beforeDispatch: async () => {
+              ensureDispatch();
+              await options.beforeDispatch?.();
+              ensureDispatch();
+            } });
+          };
+        }
+      }) : this.sender,
       session,
       reminders: this.reminders,
       onToolUpdate: () => this.sessions.update(session.id, { immediate: true }),
@@ -1114,7 +1252,28 @@ export class Orchestrator {
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）。
       // abortSignal：会话级中止时在途请求立即断开 —— isRetryableError 把
       // "中止"判为不可重试，chatCompletionWithRetry 不再打下一发，直接上抛。
-      const response = await chatCompletionWithRetry({ messages, tools: openAiTools, skillContext, signal: abortSignal });
+      let response;
+      if (subscription) {
+        const entry = triggerEntries[0];
+        const current = getConfig();
+        const storeSettings = storeConfigForChat(chatKey);
+        const privateList = current.allow?.private ?? current.allow?.privates ?? [];
+        const privateDeny = current.deny?.private ?? current.deny?.privates ?? [];
+        response = await subscription.complete({
+          messages, tools:openAiTools, signal:abortSignal, scopeValid, isAdmin:() => this.#subscriptionAdmin(entry),
+          context:{
+            inWhitelist:chatAllowed(kind, chatId, current),
+            triggerMessageId:entry.id,
+            senderInWhitelist:privateList.map(String).includes(String(entry.senderId))
+              && !privateDeny.map(String).includes(String(entry.senderId)),
+            speech:{ tier:tierInfo?.tier, mode:storeSettings.replyPolicy?.mode,
+              randomPercent:storeSettings.replyPolicy?.probability ?? storeSettings.randomPercent,
+              atMe:entry.atMe === true, poke:entry.isPoke === true }
+          }
+        });
+      } else {
+        response = await chatCompletionWithRetry({ messages, tools: openAiTools, skillContext, signal: abortSignal });
+      }
       session.model = response.model || session.model;
       // 渠道与模型必须同源：fallback 可以配另一个 provider，只更新 model 会把
       // 这次调用记到主渠道名下，导致按渠道拆分的成本报表误导用户。
@@ -1302,7 +1461,7 @@ export class Orchestrator {
     }
 
     if (runInterrupted()) return finishAborted();
-    if(!abortSignal.aborted&&!session.errorReason&&(session.localErrors?.length||session.messages.some(item=>item.toolCall?.isError))){
+    if(!subscription&&!abortSignal.aborted&&!session.errorReason&&(session.localErrors?.length||session.messages.some(item=>item.toolCall?.isError))){
       markActivity('分析本轮错误');
       const diagnostic=await inferRunErrorReason(session,{complete:chatCompletion,signal:abortSignal});
       if(diagnostic){addUsage(session.usage,diagnostic.usage);session.usage.calls++;}
@@ -1311,7 +1470,7 @@ export class Orchestrator {
     if (runInterrupted()) return finishAborted();
     // 收尾：确认的实际动作、送达未知和未发言分别记录。
     if(session.deliveryUnknown){session.errorCode='DELIVERY_UNKNOWN';session.error='QQ 动作的送达状态未知，已停止继续发送；请先核对收件端。';}
-    const status = session.error ? 'error' : (sessionHasEffects(session) ? 'done' : 'noreply');
+    const status = sessionStatus(session);
     this.sessionAbortControllers.delete(session.id);
     this.sessions.finish(session.id, status);
     this.emit('session-end', {
@@ -1323,6 +1482,35 @@ export class Orchestrator {
       errorCode:session.errorCode,errorReason:session.errorReason,errorAnalysisUnavailable:session.errorAnalysisUnavailable,deliveryUnknown:session.deliveryUnknown,sideEffects:session.sideEffects,
       usage: session.usage
     });
+  }
+
+  /**
+   * 补发之后的重新结算：把终态重新落盘，并补发一次 session-end。
+   * 没有这一步，补发那一轮发出的消息只活在内存里，UI 会一直写「未回复」。
+   */
+  #settleAfterForcedReply(session, chatKey) {
+    const status = sessionStatus(session);
+    if (status === 'noreply' && !session.finishReason) {
+      session.finishReason = '补发一轮后仍然只生成了正文、没有调用发送工具';
+    }
+    try {
+      this.sessions.refinish(session, status);
+    } catch (error) {
+      console.warn('[orchestrator] 补发后重新结算失败:', error?.message ?? error);
+      return;
+    }
+    const sent = (session.sent || []).length;
+    this.emit('session-end', {
+      sessionId: session.id,
+      chatKey,
+      status,
+      sent,
+      finishReason: session.finishReason,
+      errorCode: session.errorCode, errorReason: session.errorReason,
+      deliveryUnknown: session.deliveryUnknown, sideEffects: session.sideEffects,
+      usage: session.usage
+    });
+    console.log(`[orchestrator] 补发后重新结算 ${session.id} → ${status}（已发 ${sent} 条）`);
   }
 
   /**

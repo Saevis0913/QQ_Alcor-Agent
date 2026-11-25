@@ -104,7 +104,10 @@ export class InboxStore {
     const status = session?.status || fallback.status;
     const mapped = { waiting: 'waiting', running: 'running', done: 'replied', error: 'error', noreply: 'noreply', aborted: 'aborted', discarded: 'skipped' }[status];
     if (!mapped) return;
-    const reason = String(session?.error || fallback.error || ({ waiting: '等待合并连续消息后回复。', running: '正在调用模型或执行工具。', done: '发送接口已确认，请以 QQ 收件端为准。', error: '处理失败，请查看处理过程。', noreply: '本次处理没有发出回复。', aborted: '本次处理已中止。', discarded: '消息未触发当前回复规则。' })[status]).slice(0, 1200);
+    const defaultReason = { waiting: '等待合并连续消息后回复。', running: '正在调用模型或执行工具。', done: '发送接口已确认，请以 QQ 收件端为准。', error: '处理失败，请查看处理过程。', noreply: '本次处理没有发出回复。', aborted: '本次处理已中止。', discarded: '消息未触发当前回复规则。' }[status];
+    // 补发后仍是 noreply 时会话里会写明原因（比如「只生成了正文、没有调用发送工具」），
+    // 这比笼统的「没有发出回复」有用得多（2026-11-25）。
+    const reason = String(session?.error || (status === 'noreply' ? session?.finishReason : '') || fallback.error || defaultReason).slice(0, 1200);
     const changed = new Set();
     for (const m of this.messages) if (receiptIds.has(m.id) || m.sessionId === id) {
       if (m.recalled && m.status === 'skipped') continue;

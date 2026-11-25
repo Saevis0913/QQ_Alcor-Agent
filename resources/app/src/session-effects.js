@@ -3,6 +3,16 @@ export function sessionHasEffects(session) {
   return Boolean(session?.deliveryUnknown || session?.sideEffects?.length || session?.sent?.length);
 }
 
+/**
+ * 会话终态：出错记 error；有实际动作记 done；一个字都没发出记 noreply。
+ * #runAgent 收尾与"补发后重新结算"必须用同一套判定，否则两边会打架
+ * （补发那次运行结束时被判成 done、落盘却停在上一次的 noreply）。
+ */
+export function sessionStatus(session) {
+  if (session?.error) return 'error';
+  return sessionHasEffects(session) ? 'done' : 'noreply';
+}
+
 export function recordDeliveryError(session, error) {
   if (error?.delivery === 'unknown') session.deliveryUnknown = true;
   if (error?.nonretryable) session.nonretryable = true;

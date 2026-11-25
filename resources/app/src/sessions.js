@@ -374,6 +374,31 @@ export class SessionRegistry {
   }
 
   /**
+   * 补发之后重新结算终态（2026-11-25）。
+   *
+   * #runAgent 在静默补发**之前**就 finish 过一次（会话已从 current 移除、按第一次的
+   * 结果落盘成 noreply），补发那一轮真正发出的消息因此写不进文件；界面
+   * （inbox.syncSession、会话详情）只能读到那份旧快照 —— 表现就是「聊天里已经回了，
+   * 会话页写着未回复」。这里用内存里的活对象把终态重写一次，让磁盘与索引回到真值。
+   *
+   * ⚠️ 不走 #bumpTodayUsage：整份重记会把今日 token 与调用次数翻倍。宁可少记
+   *    补发那一轮的增量，也不能把整场会话算两遍。
+   */
+  refinish(session, status) {
+    const s = session;
+    if (!s?.id) return null;
+    s.status = status;
+    s.endedAt = Date.now();
+    s.activity = '';
+    this.#persist(s, { bumpUsage: false });
+    const idx = this.index.findIndex((e) => e.id === s.id);
+    if (idx >= 0) this.index[idx] = this.#summary(s);
+    else this.index.unshift(this.#summary(s));
+    this.#scheduleIndexCacheWrite();
+    return s;
+  }
+
+  /**
    * 彻底丢弃一个会话：从内存索引移除 + 删掉磁盘文件，**不留"中止"记录**。
    *
    * 用途：档位判定"这次不响应"时，连"等待中"会话都不该出现在会话页
@@ -547,13 +572,13 @@ export class SessionRegistry {
     this.#persist(s);
   }
 
-  #persist(s) {
+  #persist(s, { bumpUsage = true } = {}) {
     try {
       fs.mkdirSync(SESSIONS_DIR, { recursive: true });
       const tmp = `${sessionFile(s.id)}.${process.pid}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(s, null, 1), 'utf8');
       fs.renameSync(tmp, sessionFile(s.id));
-      if (s.status !== 'running' && s.status !== 'waiting') this.#bumpTodayUsage(s);
+      if (bumpUsage && s.status !== 'running' && s.status !== 'waiting') this.#bumpTodayUsage(s);
     } catch (error) {
       console.error('[sessions] 持久化失败:', error?.message ?? error);
     }
