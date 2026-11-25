@@ -1,6 +1,7 @@
 import { getConfig } from './config.js';
 import { QZONE_ACCOUNT, readLocalQzoneSnapshot } from './qzone.js';
 import { registerTool } from './tool-registry.js';
+import { skillManager } from './skills/manager.js';
 
 const MAX_ITEMS = 10;
 const ITEM_SCOPES = ['own', 'friends'];
@@ -25,7 +26,18 @@ function checkAccess(config, context) {
 const textOnly = (value, max) => String(value ?? '').replace(/(?:https?:)?\/\/[^\s<>]+/gi, '[链接]').slice(0, max);
 const failure = (content) => ({ content, isError: true });
 
-export function registerQzoneTools({ getConfig: currentConfig = getConfig, readSnapshot = readLocalQzoneSnapshot } = {}) {
+// 快照来源优先走能力：插件（plugins/qzone-reader）提供 qzone.snapshot 时就用它，
+// 没提供则退回内置读取。否则插件声明的能力没有任何调用方 —— 一份永远不跑的死代码。
+const readSnapshotViaCapability = async () => {
+  const provider = skillManager.getCapabilityProviders('qzone.snapshot', {})[0];
+  if (provider) {
+    const snapshot = await provider.fn();
+    if (snapshot && Array.isArray(snapshot.items)) return snapshot;
+  }
+  return readLocalQzoneSnapshot();
+};
+
+export function registerQzoneTools({ getConfig: currentConfig = getConfig, readSnapshot = readSnapshotViaCapability } = {}) {
   const checkAvailability = (context) => checkAccess(currentConfig(), context);
   registerTool({
     id: 'read_qzone',

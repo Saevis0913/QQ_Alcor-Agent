@@ -6,7 +6,7 @@
   "category": "media",
   "description": "把当前会话收到的 QQ 表情组成小批次，按人设筛选并添加情绪、标签和适用场景。",
   "enabledByDefault": true,
-  "capabilities": ["sticker.batch_collect"],
+  "capabilities": ["sticker.batch_collect", "sticker.label"],
   "settings": { "preference": "", "batchDelayMs": 4500, "maxModelCallsPerDay": 60 },
   "configSchema": {
     "preference": { "type": "string", "label": "额外收藏偏好", "description": "例如喜欢轻松的猫猫图和可爱的回应动作。留空时使用当前会话人设。" },

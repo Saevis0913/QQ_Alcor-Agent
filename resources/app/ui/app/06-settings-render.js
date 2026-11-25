@@ -1432,7 +1432,8 @@ function renderModulePage(kind) {
     total: items.length,
     active: items.filter((s) => s.active).length,
     off: items.filter((s) => s.loaded && !s.enabled).length,
-    broken: items.filter((s) => !s.loaded).length
+    broken: items.filter((s) => !s.loaded).length,
+    warn: items.filter((s) => s.loaded && s.audit?.effective === false).length
   };
 
   if (!items.length) {
@@ -1466,8 +1467,15 @@ function renderModulePage(kind) {
   const card = (s) => {
     const loadedOk = s.loaded;
     const active = loadedOk && s.enabled && s.active;
-    const stateCls = !loadedOk ? 'mcard-broken' : (!s.enabled ? 'mcard-off' : (active ? 'mcard-on' : 'mcard-dep'));
-    const stateLabel = !loadedOk ? '加载失败' : (!s.enabled ? '已停用' : (active ? '已启用 · 生效中' : '已启用 · 待就绪'));
+    // 有效性审计（后端 manager.status 的 audit）：加载成功 != 真的会跑。
+    // LOAD_FAILED 已经由上面的 errLine 展示，这里不再重复。
+    const auditFindings = Array.isArray(s.audit?.findings) ? s.audit.findings : [];
+    const auditWarn = auditFindings.filter((f) => f.level === 'warn' && f.code !== 'LOAD_FAILED');
+    const auditInfo = auditFindings.filter((f) => f.level === 'info');
+    const stateCls = !loadedOk ? 'mcard-broken' : (!s.enabled ? 'mcard-off' : (active ? (auditWarn.length ? 'mcard-warn' : 'mcard-on') : 'mcard-dep'));
+    const stateLabel = !loadedOk ? '加载失败'
+      : (!s.enabled ? '已停用'
+        : (active ? (auditWarn.length ? '已启用 · 不会生效' : '已启用 · 生效中') : '已启用 · 待就绪'));
     // 无法真正生效时，把原因写在卡片上（不再只藏在 title 提示里）
     let errLine = '';
     if (!loadedOk) {
@@ -1488,6 +1496,11 @@ function renderModulePage(kind) {
         ${(s.toolIds || []).length ? `<div class="mcard-tools" title="本技能注册的工具 id">${(s.toolIds || []).map((id) => `<code class="mcard-tool-id">${esc(id)}</code>`).join('')}</div>` : ''}
         <div class="mcard-desc">${esc(s.description || '（没有写介绍）')}</div>
         ${errLine ? `<div class="mcard-err">${esc(errLine)}</div>` : ''}
+        ${auditWarn.length
+          ? `<div class="mcard-audit" title="${esc(auditFindings.map((f) => `${f.code}：${f.message}\n修法：${f.fix}`).join('\n\n'))}">⚠ ${esc(auditWarn.slice(0, 2).map((f) => f.message).join('；'))}${auditWarn.length > 2 ? ` 等 ${auditWarn.length} 项` : ''}</div>`
+          : (auditInfo.length
+            ? `<div class="mcard-audit mcard-audit--info" title="${esc(auditInfo.map((f) => `${f.code}：${f.message}\n修法：${f.fix}`).join('\n\n'))}">${esc(auditInfo[0].message)}${auditInfo.length > 1 ? ` 等 ${auditInfo.length} 项` : ''}</div>`
+            : '')}
       </div>
       <div class="mcard-controls"><span class="mcard-status">${esc(stateLabel)}</span><div class="mcard-acts">${toggleBtn}${settingsBtn}</div></div>
     </div>`;
@@ -1518,6 +1531,7 @@ function renderModulePage(kind) {
           placeholder="搜索${meta.kind === 'skill' ? '技能' : '插件'}名称 / 简介…" autocomplete="off" />
         <div class="usage-days">
           <span class="uc-tag" title="生效中 / 这一页的总数">${mine.active} / ${mine.total} 生效</span>
+          ${mine.warn ? `<span class="uc-tag uc-tag--warn" title="加载成功、但按当前写法不会真的跑起来的条目数">${mine.warn} 项待修</span>` : ''}
           <button class="btn btn-small" id="${esc(meta.tab)}-refresh-btn">刷新</button>
         </div>
       </div>

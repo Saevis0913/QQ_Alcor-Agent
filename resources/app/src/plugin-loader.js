@@ -32,6 +32,7 @@ import { registerTool, unregisterTool, unregisterToolsBySkill, getTool, listTool
 import { skillManager } from './skills/manager.js';
 import { normalizeManifest, isManifestUsable, SKILL_API_VERSION, kindOfDir } from './skills/manifest.js';
 import { skillErrorText } from './skills/errors.js';
+import { auditSkill } from './skills/effectiveness.js';
 
 // ⚠️ 必须以**模块自身位置**为锚点，不能用 process.cwd()。
 // 打包/安装版里 App 文件在 <install>/resources/app/，而快捷方式的"起始位置"
@@ -360,9 +361,14 @@ async function loadSkillDir(dir, { log = console.log, kind = null } = {}) {
   }
 
   const toolIds = [];
+  // 工具级 requires（registerTool 的 def.requires）也是真实的依赖声明：
+  // 例如 sticker-tags 的 collect_batch 依赖 sticker.batch_collect。
+  // 收进实例里，有效性审计才算得出"这个能力确实有人用"。
+  const toolRequires = new Set();
   const collectingRegister = (def) => {
     const id = api.registerTool(def);
     toolIds.push(id);
+    for (const cap of def?.requires || []) toolRequires.add(String(cap));
     return id;
   };
   const apiWithCollect = { ...api, registerTool: collectingRegister };
@@ -430,6 +436,7 @@ async function loadSkillDir(dir, { log = console.log, kind = null } = {}) {
     kind,
     api: apiWithCollect,
     toolIds,
+    toolRequires: [...toolRequires],
     // 生命周期与扩展点（可选）
     available: typeof mod.available === 'function' ? mod.available : null,
     availableReason: '',
@@ -454,6 +461,16 @@ async function loadSkillDir(dir, { log = console.log, kind = null } = {}) {
 
   // 两型语义校验：把"放错目录导致功能静默失效"变成启动时的明确警告
   lintKindPlacement(kind, skill, log);
+
+  // 有效性校验：钩子名不在核心发射表里、声明了没实现、一个接点都没有 ——
+  // 这三类过去都是"日志一行 ✅、功能一次没跑"。这里在加载期就说清楚，
+  // 同一条审计结果也会出现在 /api/skills 的每条记录里（manager.status）。
+  const audit = auditSkill(skill, { requiredBy: skillManager.requiredCapabilities() });
+  if (audit.findings.length) {
+    const mark = audit.effective ? 'ℹ️' : '⚠️';
+    const lines = audit.findings.map((f) => `${f.code}（${f.message}）`);
+    log(`[skill] ${mark} ${manifest.id} 有效性：${lines.join('；')}`);
+  }
 
   log(`[skill] ✅ 加载成功：${manifest.name}（${manifest.id} v${manifest.version}，api v${manifest.apiVersion || SKILL_API_VERSION}）`);
   return { dir, loaded: true, id: manifest.id, skill };

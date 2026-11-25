@@ -37,6 +37,7 @@ import { builtinVisionResults } from './model-vision-docs.js';
 import { todayKey } from './util.js';
 import { logger } from './logger.js';
 import { skillManager } from './skills/manager.js';
+import { CONSUMED_CAPABILITIES } from './skills/effectiveness.js';
 import { getSkillConfig, setSkillConfig, setSkillEnabled, listConfiguredSkillIds } from './skills/config.js';
 import { availabilityOf, listTools, CATEGORY_META } from './tool-registry.js';
 import { safeFetchBinary, browseLockState } from './safe-fetch.js';
@@ -1446,11 +1447,33 @@ export function createRoutes(deps) {
       handler: async ({ res, json }) => {
         const context = skillRuntimeContext();
         const caps = skillManager.capabilities.list().sort();
+        // consumers：这个能力到底被谁用。核心取用点 + 依赖它的 Skill（清单 requires
+        // 或工具级 requires）各占一行 —— 空数组就是「登记了但没人用」。
+        const requiredBy = new Map();
+        for (const s of skillManager.registry.list()) {
+          const id = s?.manifest?.id;
+          if (!id) continue;
+          for (const cap of s.manifest?.requires || []) {
+            if (!requiredBy.has(cap)) requiredBy.set(cap, []);
+            requiredBy.get(cap).push(id);
+          }
+          for (const cap of s.toolRequires || []) {
+            if (!requiredBy.has(cap)) requiredBy.set(cap, []);
+            requiredBy.get(cap).push(`${id}（工具）`);
+          }
+        }
         return json(res, 200, {
-          capabilities: caps.map((c) => ({
-            name: c,
-            ...skillManager.explainCapability(c, context)
-          }))
+          capabilities: caps.map((c) => {
+            const core = CONSUMED_CAPABILITIES[c];
+            const users = requiredBy.get(c) || [];
+            const consumers = [...(core ? [`核心：${core}`] : []), ...users.map((id) => `${id} 依赖`)];
+            return {
+              name: c,
+              ...skillManager.explainCapability(c, context),
+              consumers,
+              unconsumed: consumers.length === 0
+            };
+          })
         });
       }
     },

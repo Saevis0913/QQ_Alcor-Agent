@@ -41,6 +41,15 @@ async function transcribeVoice(record, onebot) {
   try {
     const fn = skillManager.getCapabilityProviders('media.transcribe')[0]?.fn;
     if (!fn || !onebot) return null;
+    // 先问能力提供者"现在这条路走得通吗"（例如 whisper 路径被改坏、模型未下载）。
+    // 插件自己的判断只有一份，核心不再重复探测；明确不可用就直接退回 [语音] 占位。
+    const probe = skillManager.getCapabilityProviders('media.transcribe.available', {})[0];
+    if (probe) {
+      try {
+        const a = await probe.fn({});
+        if (a && a.ok === false) return null;
+      } catch { /* 探测异常不等于不能转写，继续按原路径尝试 */ }
+    }
     const r = await fn({ record, onebot });
     const text = String(r?.text ?? '').trim();
     return r?.ok && text ? text : null;

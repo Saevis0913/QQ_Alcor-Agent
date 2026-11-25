@@ -17,6 +17,7 @@ import { SkillRegistry } from './registry.js';
 import { CapabilityRegistry } from './capabilities.js';
 import { SKILL_ERROR, SkillError, skillErrorText } from './errors.js';
 import { isSkillEnabledInConfig, getSkillConfig } from './config.js';
+import { auditSkill } from './effectiveness.js';
 
 /** hook 默认超时：单个 Skill 卡死不能拖垮整轮对话。 */
 const DEFAULT_HOOK_TIMEOUT_MS = 5000;
@@ -222,6 +223,20 @@ export class SkillManager {
     return this.registry.list().map((skill) => this.status(skill.manifest.id, context));
   }
 
+  /**
+   * 所有 Skill 的 requires 合集。
+   * 「有效性」用得到：一个能力即使核心不直接取用，只要有别的 Skill 依赖它就不算没人用。
+   */
+  requiredCapabilities() {
+    const required = new Set();
+    for (const skill of this.registry.list()) {
+      for (const cap of skill?.manifest?.requires || []) required.add(String(cap));
+      // 工具级 requires：registerTool 定义里声明的能力，同样代表"有人在用"。
+      for (const cap of skill?.toolRequires || []) required.add(String(cap));
+    }
+    return required;
+  }
+
   status(id, context = {}) {
     const skill = this.registry.get(id);
     if (!skill) {
@@ -269,6 +284,10 @@ export class SkillManager {
       //   · 实现了但没声明 → 用户看不出它提供什么，也可能被别人重复实现
       // 放进视图（而不是只写在测试里），是为了让 UI 也能显示成警告。
       implementedCapabilities: Object.keys(skill.providers || {}),
+      // audit：加载成功 ≠ 真的生效。这里把「钩子名核心不发射 / 声明了没实现 /
+      // 声明了没人消费 / 没有接点」四类静默失效变成结构化条目，
+      // /api/skills 与技能页直接渲染，不用让用户猜为什么"开了却没反应"。
+      audit: auditSkill(skill, { requiredBy: this.requiredCapabilities() }),
       // 该模块注册的行为钩子名（确定性型常见形态：靠钩子插进主流程）
       hooks: Object.keys(skill.hooks || {}),
       // 当前设置值（密文已脱敏）与字段描述 —— UI 靠这两个渲染"技能设置"弹窗。
@@ -498,11 +517,15 @@ export class SkillManager {
   /** 给 /api/status 用的紧凑摘要。 */
   summary(context = {}) {
     const list = this.list(context);
+    const audits = list.map((s) => s.audit).filter(Boolean);
     return {
       total: list.length,
       active: list.filter((s) => s.active).length,
       disabled: list.filter((s) => s.loaded && !s.enabled).length,
       broken: list.filter((s) => !s.loaded).length,
+      // ineffective：加载成功、却因为钩子名写错/声明没实现/没有接点而注定不生效的条目。
+      ineffective: audits.filter((a) => !a.effective).length,
+      warnings: audits.reduce((n, a) => n + a.findings.filter((f) => f.level === 'warn').length, 0),
       capabilities: this.capabilities.list().sort()
     };
   }

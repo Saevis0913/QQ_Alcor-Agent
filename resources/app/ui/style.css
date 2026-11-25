@@ -956,6 +956,21 @@ td b, .tbl td b { color: var(--tx); font-weight: 600; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
 .mcard-err { display: block; font-size: 11px; color: var(--err); }
+/* 有效性审计：加载成功，但按当前写法不会真的跑（钩子名核心不发射 / 声明没实现 / 没有接点） */
+.mcard-warn {
+  border-color: var(--warn-line);
+  box-shadow: inset 0 0 0 1px var(--warn-line),
+              inset 0 0 26px -6px rgba(221, 159, 63, .38),
+              0 0 18px -10px rgba(221, 159, 63, .28);
+}
+[data-theme='light'] .mcard-warn {
+  box-shadow: inset 0 0 0 1px rgba(196, 140, 48, .5),
+              inset 0 0 22px -6px rgba(196, 140, 48, .28);
+}
+.mcard-warn .mcard-status { color: var(--warn); }
+.mcard-audit { display: block; font-size: 11px; line-height: 1.45; color: var(--warn); }
+.mcard-audit--info { color: var(--tx3); }
+.uc-tag--warn { color: var(--warn); border-color: var(--warn-line); }
 .mcard-acts {
   display: flex; align-items: center; gap: 8px;
   flex-shrink: 0; margin-left: auto;
