@@ -33,7 +33,7 @@ export async function initializeInstall({installRoot,dataDir=path.join(installRo
   if(agentPort===corePort)throw new Error('PORT_COLLISION: Agent 和 Alcor 核心需要不同端口。');
   const baseConfig={server:{port:agentPort,startPaused:true,autoStart:false},alcor:{dir:'',configFile:'',autoLaunch:true},
     api:{baseUrl:'',model:'',apiKey:''},allow:{groups:[],private:[]},allowAllWhenEmpty:false,
-    persona:{botName:'Alcor',roleText:''},customPersonas:[],personaByChat:{},
+    persona:{botName:'Aino',roleText:''},customPersonas:[],personaByChat:{},
     store:{replyPolicy:{mode:'all',probability:10},unifiedTier:true},extensions:{hotReload:false},
     ui:{theme:'auto',installGuideSeen:false,alcorAccessGuideSeen:true,injectionCheckSeen:false}};
   let template='';

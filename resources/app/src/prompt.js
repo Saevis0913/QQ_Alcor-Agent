@@ -77,6 +77,7 @@ export function buildSystemPrompt({ persona, skillContext, extraSections = [] } 
     .replaceAll('{participation}', participationStyle);
   const parts = [conversationInstructions({
     botName: cfg.botName,
+    roleText: cfg.roleText,
     participationStyle,
     override,
     vision: settings.api?.vision !== false,
@@ -84,13 +85,13 @@ export function buildSystemPrompt({ persona, skillContext, extraSections = [] } 
     stickerSettings: settings.sticker
   })];
 
-  // 人设正文（设置 → 聊天与人格 → 人设）：以前只有在自定义系统提示词里写
-  // {roleText} 才会出现，默认路径下管理员填的人设被完全忽略 —— 行为和"人设"这两个字
-  // 对不上。这里固定插在核心规则之后、Skill 之前：位置稳定，不会破坏缓存前缀。
+  // 人设正文（设置 → 聊天与人格 → 人设）：默认提示词把它放在【Persona & Expression】
+  // 的「性格特征」一段（留空时用内置默认人设）；自定义提示词走整体替换，仍在核心规则
+  // 之后追加。这里插在核心规则之后、Skill 之前：位置稳定，不会破坏缓存前缀。
   const roleTemplate = String(cfg.systemPromptOverride ?? '');
   const roleText = String(cfg.roleText ?? '').trim();
   // 自定义提示词里已经写了 {roleText} 时不再重复追加，否则正文会出现两遍人设。
-  if (roleText && !roleTemplate.includes('{roleText}')) parts.push('', '【角色设定】', roleText);
+  if (override && roleText && !roleTemplate.includes('{roleText}')) parts.push('', '【角色设定】', roleText);
 
   // 注入 Skill 提示词片段（已按 priority 降序；一律排在核心规则之后）
   parts.push(...renderSkillSections(skillSections));

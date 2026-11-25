@@ -183,7 +183,7 @@ export const DEFAULT_CONFIG = {
   },
   // 人设与行为
   persona: {
-    botName: 'Alcor',                     // 中性产品名；不预装角色身份
+    botName: 'Aino',                      // 内置默认人格的名字（可在设置里改）
     selfNickname: '',                       // 在群里的展示名（留空用 QQ 昵称）
     roleText: '',                          // 首次使用由用户自行填写或添加人设
     participation: 'medium',                // low | medium | high —— 参与度参考
