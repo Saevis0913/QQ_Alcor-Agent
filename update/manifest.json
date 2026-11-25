@@ -8,7 +8,7 @@
   "rollout": 100,
   "full": {
     "urls": [
-      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3-latest/Alcor-Agent-Setup-0.3.3-x64.exe"
+      "https://github.com/Saevis0913/QQ_Alcor-Agent/releases/download/v0.3.3/Alcor-Agent-Setup-0.3.3-x64.exe"
     ],
     "bytes": 319466906,
     "sha256": "46350d3dc6dc8a45c5f8a6e8fee0c17af55d8c9d9cde6b13563700e966b1cce8",
